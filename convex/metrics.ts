@@ -14,7 +14,7 @@
  * Only log safe metadata: endpoint class, cost tier, cache hit, etc.
  */
 
-import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
+import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 
 // ============================================================================

@@ -24,9 +24,8 @@
  * ```
  */
 
-import { mutation, internalMutation, internalQuery, query } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { Doc, Id } from "./_generated/dataModel";
 
 // ============================================================================
 // Types & Configuration
@@ -155,6 +154,16 @@ export const checkRateLimit = internalMutation({
       };
     }
 
+    // Must have either userId or ip for rate limiting
+    if (!userId && !ip) {
+      // No identifier provided - allow but don't track (edge case)
+      return {
+        allowed: true,
+        remaining: config.limit,
+        resetAt: Date.now() + config.window,
+      };
+    }
+
     // Build rate limit key
     const key = userId ? `user:${userId}:${action}` : `ip:${ip}:${action}`;
 
@@ -237,6 +246,16 @@ export const getRateLimitStatus = internalQuery({
       };
     }
 
+    // Must have either userId or ip for rate limiting
+    if (!userId && !ip) {
+      return {
+        allowed: true,
+        remaining: config.limit,
+        resetAt: Date.now() + config.window,
+        limit: config.limit,
+      };
+    }
+
     const key = userId ? `user:${userId}:${action}` : `ip:${ip}:${action}`;
     const now = Date.now();
 
@@ -296,6 +315,16 @@ export const enforceRateLimit = internalMutation({
         retryAfterSeconds: 0,
         action,
       });
+    }
+
+    // Must have either userId or ip for rate limiting
+    if (!userId && !ip) {
+      // No identifier provided - allow but don't track (edge case)
+      return {
+        allowed: true,
+        remaining: config.limit,
+        resetAt: Date.now() + config.window,
+      };
     }
 
     // Build rate limit key

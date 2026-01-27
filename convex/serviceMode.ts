@@ -17,7 +17,6 @@
  */
 
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 // ============================================================================
@@ -96,11 +95,6 @@ const MODE_REASONS = {
  * Budget warning threshold (percentage) to trigger Cost-Saver mode
  */
 const BUDGET_WARNING_THRESHOLD = 80;
-
-/**
- * Latency threshold in ms to trigger Cost-Saver mode
- */
-const LATENCY_WARNING_THRESHOLD_MS = 2000;
 
 // ============================================================================
 // Public Queries
