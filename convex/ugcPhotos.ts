@@ -298,11 +298,13 @@ export const updatePhotoModeration = internalMutation({
     const photo = await ctx.db.get(args.photoId);
     if (!photo) return;
 
-    // If we have a new processed image, delete the old one
-    if (args.newStorageId && args.newStorageId !== photo.storageId) {
-      await ctx.storage.delete(photo.storageId);
-    }
+    // Store old storageId if we need to delete it after update
+    const oldStorageId =
+      args.newStorageId && args.newStorageId !== photo.storageId
+        ? photo.storageId
+        : null;
 
+    // Update the DB record first (transactional)
     await ctx.db.patch(args.photoId, {
       moderationStatus: args.moderationStatus as ModerationStatus,
       nsfwScore: args.nsfwScore,
@@ -314,6 +316,12 @@ export const updatePhotoModeration = internalMutation({
       // Update storageId if we uploaded a processed version
       ...(args.newStorageId && { storageId: args.newStorageId }),
     });
+
+    // Delete old storage file after successful DB update (non-transactional)
+    // If this fails, we have an orphaned file but no broken references
+    if (oldStorageId) {
+      await ctx.storage.delete(oldStorageId);
+    }
   },
 });
 
@@ -665,13 +673,10 @@ export const deletePhoto = mutation({
       }
     }
 
-    // Delete the storage file
-    await ctx.storage.delete(photo.storageId);
+    // Store storageId before deleting record (needed for storage cleanup)
+    const storageIdToDelete = photo.storageId;
 
-    // Delete the record
-    await ctx.db.delete(args.photoId);
-
-    // If attached to a review, update the review's photoIds
+    // If attached to a review, update the review's photoIds first
     if (photo.reviewId) {
       const review = await ctx.db.get(photo.reviewId);
       if (review?.photoIds) {
@@ -683,6 +688,13 @@ export const deletePhoto = mutation({
         });
       }
     }
+
+    // Delete the DB record (transactional)
+    await ctx.db.delete(args.photoId);
+
+    // Delete the storage file last (non-transactional)
+    // If this fails, we have an orphaned storage file (minor leak) but no broken references
+    await ctx.storage.delete(storageIdToDelete);
 
     return { success: true };
   },
