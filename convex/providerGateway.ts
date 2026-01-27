@@ -130,7 +130,7 @@ export type CircuitState = "closed" | "open" | "half_open";
  * Build the Google Places API (New) URL for a request
  */
 export function buildPlacesApiUrl(
-  endpoint: "places" | "places:searchText" | "places:searchNearby",
+  endpoint: "places" | "places:searchText" | "places:searchNearby" | "places:autocomplete",
   placeId?: string
 ): string {
   const baseUrl = "https://places.googleapis.com/v1";
@@ -141,6 +141,8 @@ export function buildPlacesApiUrl(
       return `${baseUrl}/places/${placeId}`;
     case "places:searchText":
       return `${baseUrl}/places:searchText`;
+    case "places:autocomplete":
+      return `${baseUrl}/places:autocomplete`;
     case "places:searchNearby":
       return `${baseUrl}/places:searchNearby`;
     default:
@@ -727,6 +729,10 @@ export const providerRequest = internalAction({
     sessionToken: v.optional(v.string()),
     placeId: v.optional(v.string()),
     query: v.optional(v.string()),
+    /** Autocomplete input text */
+    input: v.optional(v.string()),
+    /** Types to include in autocomplete (e.g., restaurant, cafe) */
+    includedPrimaryTypes: v.optional(v.array(v.string())),
     locationBias: v.optional(v.object({
       lat: v.number(),
       lng: v.number(),
@@ -795,7 +801,7 @@ export const providerRequest = internalAction({
     }
 
     // Check if endpoint class is implemented
-    const implementedEndpoints: EndpointClass[] = ["place_details", "text_search"];
+    const implementedEndpoints: EndpointClass[] = ["place_details", "text_search", "autocomplete"];
     if (!implementedEndpoints.includes(endpointClass)) {
       return finalize({
         success: false,
@@ -840,6 +846,42 @@ export const providerRequest = internalAction({
         error: {
           code: "MISSING_PARAMETER",
           message: "query is required for text_search endpoint",
+          retryable: false,
+        },
+        metadata: {
+          requestId,
+          latencyMs: Date.now() - startTime,
+          costClass: "none",
+          fieldSet: fieldSetKey,
+          endpointClass,
+          cacheHit: false,
+        },
+      });
+    }
+    if (endpointClass === "autocomplete" && !args.input) {
+      return finalize({
+        success: false,
+        error: {
+          code: "MISSING_PARAMETER",
+          message: "input is required for autocomplete endpoint",
+          retryable: false,
+        },
+        metadata: {
+          requestId,
+          latencyMs: Date.now() - startTime,
+          costClass: "none",
+          fieldSet: fieldSetKey,
+          endpointClass,
+          cacheHit: false,
+        },
+      });
+    }
+    if (endpointClass === "autocomplete" && args.input && args.input.length < 2) {
+      return finalize({
+        success: false,
+        error: {
+          code: "INVALID_PARAMETER",
+          message: "input must be at least 2 characters for autocomplete",
           retryable: false,
         },
         metadata: {
@@ -984,6 +1026,36 @@ export const providerRequest = internalAction({
                   latitude: args.locationRestriction.north,
                   longitude: args.locationRestriction.east,
                 },
+              },
+            },
+          }),
+        });
+      } else if (args.input && endpointClass === "autocomplete") {
+        url = buildPlacesApiUrl("places:autocomplete");
+        method = "POST";
+        body = JSON.stringify({
+          input: args.input,
+          languageCode: language,
+          regionCode: regionCode,
+          // Session token for cost bundling (autocomplete + place details = one charge)
+          ...(args.sessionToken && { sessionToken: args.sessionToken }),
+          // Filter to food-related place types
+          ...(args.includedPrimaryTypes && {
+            includedPrimaryTypes: args.includedPrimaryTypes,
+          }),
+          // Default to Morocco food-related types if not specified
+          ...(!args.includedPrimaryTypes && {
+            includedPrimaryTypes: ["restaurant", "cafe", "bakery", "food"],
+          }),
+          // Location bias for relevant results
+          ...(args.locationBias && {
+            locationBias: {
+              circle: {
+                center: {
+                  latitude: args.locationBias.lat,
+                  longitude: args.locationBias.lng,
+                },
+                radius: args.locationBias.radiusMeters ?? 50000, // 50km default for autocomplete
               },
             },
           }),

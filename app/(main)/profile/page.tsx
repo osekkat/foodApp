@@ -13,6 +13,9 @@ export default function ProfilePage() {
         <p className="mt-4 text-zinc-600 dark:text-zinc-400">
           Profile functionality coming soon...
         </p>
+        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-500">
+          Sign out button will be available once authentication is configured.
+        </p>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { defineSchema, defineTable } from "convex/server";
+import { authTables } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 
 /**
@@ -15,21 +16,30 @@ import { v } from "convex/values";
  */
 
 export default defineSchema({
+  ...authTables,
   // ===========================================
   // Users & Authentication
   // ===========================================
 
   // Users table (managed by Convex Auth)
   users: defineTable({
-    email: v.string(),
+    // Convex Auth required fields
     name: v.optional(v.string()),
+    email: v.optional(v.string()),
+    emailVerificationTime: v.optional(v.number()),
+    phone: v.optional(v.string()),
+    phoneVerificationTime: v.optional(v.number()),
     image: v.optional(v.string()),
+    isAnonymous: v.optional(v.boolean()),
+    // App-specific fields
     locale: v.optional(v.string()), // "ar" | "fr" | "en"
-    createdAt: v.number(),
+    createdAt: v.optional(v.number()),
     lastActiveAt: v.optional(v.number()),
-    reviewCount: v.number(), // Denormalized for trust scoring
-    helpfulVotesReceived: v.number(), // Denormalized for trust scoring
-  }).index("by_email", ["email"]),
+    reviewCount: v.optional(v.number()), // Denormalized for trust scoring
+    helpfulVotesReceived: v.optional(v.number()), // Denormalized for trust scoring
+  })
+    .index("email", ["email"])
+    .index("by_email", ["email"]),
 
   // User reputation for trust tiers
   userReputation: defineTable({

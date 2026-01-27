@@ -140,6 +140,18 @@ export const FIELD_SETS = {
     description: "Search results with ratings",
     maxCostPerCall: 10,
   },
+
+  /**
+   * Autocomplete - for search suggestions
+   * Use case: Search bar autocomplete dropdown
+   * Note: Autocomplete API has special pricing when used with session tokens
+   */
+  AUTOCOMPLETE: {
+    mask: "suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat,suggestions.placePrediction.types",
+    costTier: "basic" as CostTier,
+    description: "Autocomplete suggestions with place ID and display text",
+    maxCostPerCall: 3, // Session-tokened pricing is bundled
+  },
 } as const;
 
 export type FieldSetKey = keyof typeof FIELD_SETS;

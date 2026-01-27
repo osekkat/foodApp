@@ -1,0 +1,243 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
+import {
+  SearchSessionManager,
+  type AutocompleteResult,
+} from "@/lib/searchSession";
+
+/**
+ * Debounce delay for autocomplete requests (ms)
+ */
+const DEBOUNCE_DELAY = 300;
+
+/**
+ * Minimum query length before making autocomplete request
+ */
+const MIN_QUERY_LENGTH = 2;
+
+export interface UseSearchOptions {
+  /** Debounce delay in ms (default: 300) */
+  debounceMs?: number;
+  /** Minimum query length (default: 2) */
+  minQueryLength?: number;
+  /** Location bias for autocomplete */
+  locationBias?: {
+    lat: number;
+    lng: number;
+    radiusMeters?: number;
+  };
+  /** Included place types for filtering */
+  includedPrimaryTypes?: string[];
+  /** Language code (default: "en") */
+  language?: string;
+}
+
+export interface UseSearchResult {
+  /** Current search query */
+  query: string;
+  /** Set the search query */
+  setQuery: (query: string) => void;
+  /** Autocomplete suggestions */
+  suggestions: AutocompleteResult[];
+  /** Loading state */
+  isLoading: boolean;
+  /** Error message if any */
+  error: string | null;
+  /** Select a place from suggestions (completes session) */
+  selectPlace: (placeId: string) => Promise<void>;
+  /** Clear search and reset state */
+  clear: () => void;
+  /** Whether autocomplete is enabled based on query length */
+  isAutocompleteEnabled: boolean;
+}
+
+/**
+ * Hook for search with autocomplete, debouncing, and session management
+ *
+ * @example
+ * ```tsx
+ * const { query, setQuery, suggestions, isLoading, selectPlace, clear } = useSearch({
+ *   locationBias: { lat: 31.6295, lng: -7.9811, radiusMeters: 50000 },
+ * });
+ *
+ * return (
+ *   <input
+ *     value={query}
+ *     onChange={(e) => setQuery(e.target.value)}
+ *     placeholder="Search for restaurants..."
+ *   />
+ *   {isLoading && <Spinner />}
+ *   {suggestions.map((s) => (
+ *     <button key={s.placeId} onClick={() => selectPlace(s.placeId)}>
+ *       {s.structuredFormat?.mainText.text}
+ *     </button>
+ *   ))}
+ * );
+ * ```
+ */
+export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
+  const {
+    debounceMs = DEBOUNCE_DELAY,
+    minQueryLength = MIN_QUERY_LENGTH,
+    locationBias,
+    includedPrimaryTypes,
+    language = "en",
+  } = options;
+
+  const [query, setQueryState] = useState("");
+  const [suggestions, setSuggestions] = useState<AutocompleteResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Session manager for token lifecycle
+  const sessionManagerRef = useRef<SearchSessionManager | null>(null);
+
+  // Debounce timer ref
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Initialize session manager
+  useEffect(() => {
+    sessionManagerRef.current = new SearchSessionManager();
+    return () => {
+      sessionManagerRef.current?.clearSession();
+    };
+  }, []);
+
+  // Note: providerRequest is internal, so we'll need a public action
+  // For now, we'll create the hook structure and the action can be added later
+  // const autocomplete = useAction(api.providerGateway.providerRequest);
+
+  /**
+   * Perform autocomplete request
+   */
+  const performAutocomplete = useCallback(
+    async (searchQuery: string) => {
+      if (!sessionManagerRef.current) return;
+
+      const sessionManager = sessionManagerRef.current;
+
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        // Get abort signal to cancel any previous request
+        const signal = sessionManager.getAbortSignal();
+
+        // TODO: Replace with actual Convex action call when public action is created
+        // For now, this is a placeholder that shows the intended structure
+        // const result = await autocomplete({
+        //   fieldSet: "AUTOCOMPLETE",
+        //   endpointClass: "autocomplete",
+        //   input: searchQuery,
+        //   sessionToken: sessionManager.getToken(),
+        //   language,
+        //   ...(locationBias && { locationBias }),
+        //   ...(includedPrimaryTypes && { includedPrimaryTypes }),
+        // });
+
+        // Placeholder: In production, parse the actual API response
+        // For now, return empty suggestions until the action is connected
+        if (signal.aborted) return;
+
+        // Mock empty response - replace with actual API call
+        setSuggestions([]);
+      } catch (err) {
+        // Don't show error if request was aborted (user typed more)
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+        setError(err instanceof Error ? err.message : "Search failed");
+        setSuggestions([]);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [language, locationBias, includedPrimaryTypes]
+  );
+
+  /**
+   * Set query with debouncing
+   */
+  const setQuery = useCallback(
+    (newQuery: string) => {
+      setQueryState(newQuery);
+
+      // Clear previous debounce timer
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+
+      // Clear suggestions if query is too short
+      if (newQuery.length < minQueryLength) {
+        setSuggestions([]);
+        setError(null);
+        return;
+      }
+
+      // Debounce the autocomplete request
+      debounceTimerRef.current = setTimeout(() => {
+        performAutocomplete(newQuery);
+      }, debounceMs);
+    },
+    [debounceMs, minQueryLength, performAutocomplete]
+  );
+
+  /**
+   * Select a place from suggestions
+   * This completes the session and triggers place details fetch
+   */
+  const selectPlace = useCallback(async (placeId: string) => {
+    if (!sessionManagerRef.current) return;
+
+    // Complete the session (this consumes the token for billing)
+    sessionManagerRef.current.completeSession();
+
+    // Clear suggestions
+    setSuggestions([]);
+
+    // TODO: Navigate to place details page or fetch details
+    // This would typically be handled by the parent component
+    console.log("Selected place:", placeId);
+  }, []);
+
+  /**
+   * Clear search state
+   */
+  const clear = useCallback(() => {
+    setQueryState("");
+    setSuggestions([]);
+    setError(null);
+    setIsLoading(false);
+
+    // Clear debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Clear session without completing (no billing charge for unused session)
+    sessionManagerRef.current?.clearSession();
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  return {
+    query,
+    setQuery,
+    suggestions,
+    isLoading,
+    error,
+    selectPlace,
+    clear,
+    isAutocompleteEnabled: query.length >= minQueryLength,
+  };
+}
