@@ -6,8 +6,11 @@ export default defineConfig({
     environment: "node",
     globals: true,
     include: ["tests/**/*.test.ts", "tests/**/*.spec.ts"],
-    exclude: ["node_modules", ".next", "convex/_generated"],
+    // Exclude E2E tests (run with Playwright) and build artifacts
+    exclude: ["node_modules", ".next", "convex/_generated", "tests/e2e/**"],
+    setupFiles: ["./tests/setup.ts"],
     coverage: {
+      provider: "v8",
       reporter: ["text", "json", "html"],
       exclude: ["node_modules", "convex/_generated", "tests"],
     },
