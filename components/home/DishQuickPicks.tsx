@@ -21,7 +21,7 @@ export function DishQuickPicks() {
         {DISHES.map((dish) => (
           <Link
             key={dish.slug}
-            href={`/search?dish=${dish.slug}`}
+            href={`/explore/dishes/${dish.slug}`}
             className="group flex flex-col items-center rounded-xl border border-zinc-200 bg-white p-4 transition-all hover:border-orange-300 hover:shadow-md dark:border-zinc-700 dark:bg-zinc-800 dark:hover:border-orange-600"
           >
             <span className="mb-2 text-3xl">{dish.emoji}</span>

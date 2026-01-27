@@ -377,6 +377,138 @@ export const searchDishes = query({
 });
 
 // ============================================================================
+// Dish Explorer - Find Places by Dish
+// ============================================================================
+
+/**
+ * Dish Explorer: Find the best places for a specific dish
+ *
+ * Ranking uses ONLY owned signals (no provider data):
+ * - Dish mentions weighted highest (x3)
+ * - Recent reviews (x2)
+ * - Favorites count (x1)
+ *
+ * This query works in degraded modes since it uses only owned data.
+ */
+export const exploreDish = query({
+  args: {
+    dish: v.string(),
+    city: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 20;
+    const normalized = normalizeDish(args.dish);
+
+    if (!normalized) {
+      return { places: [], dish: args.dish, totalCount: 0 };
+    }
+
+    // Get all places that have this dish mentioned
+    const dishMentions = await ctx.db
+      .query("placeDishes")
+      .withIndex("by_dish", (q) => q.eq("dish", normalized))
+      .collect();
+
+    if (dishMentions.length === 0) {
+      return { places: [], dish: normalized, totalCount: 0 };
+    }
+
+    // Get place data for scoring
+    const placesWithScores = await Promise.all(
+      dishMentions.map(async (dm) => {
+        // Get place anchor data
+        const place = await ctx.db
+          .query("places")
+          .withIndex("by_placeKey", (q) => q.eq("placeKey", dm.placeKey))
+          .first();
+
+        // Get curated card if exists
+        const curatedCard = await ctx.db
+          .query("curatedPlaces")
+          .filter((q) =>
+            q.or(
+              q.eq(q.field("placeKey"), dm.placeKey),
+              q.eq(q.field("linkedPlaceKey"), dm.placeKey)
+            )
+          )
+          .first();
+
+        // Count recent reviews (last 30 days)
+        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const recentReviews = await ctx.db
+          .query("reviews")
+          .withIndex("by_place_recent", (q) =>
+            q.eq("placeKey", dm.placeKey).gte("createdAt", thirtyDaysAgo)
+          )
+          .collect();
+
+        const recentReviewCount = recentReviews.filter((r) => !r.deletedAt).length;
+
+        // Calculate dish score
+        const dishScore =
+          dm.mentionsCount * 3 + // Dish mentions weighted highest
+          recentReviewCount * 2 + // Recent reviews
+          (place?.favoritesCount ?? 0) * 1; // Favorites count
+
+        return {
+          placeKey: dm.placeKey,
+          dish: dm.dish,
+          dishMentions: dm.mentionsCount,
+          lastMentionedAt: dm.lastMentionedAt,
+          favoritesCount: place?.favoritesCount ?? 0,
+          recentReviewCount,
+          communityRating: place?.communityRatingAvg,
+          communityRatingCount: place?.communityRatingCount ?? 0,
+          // Curated card data if available
+          curatedTitle: curatedCard?.title,
+          curatedSummary: curatedCard?.summary,
+          curatedNeighborhood: curatedCard?.neighborhood,
+          curatedMustTry: curatedCard?.mustTry,
+          isCurated: !!curatedCard,
+          city: curatedCard?.city,
+          dishScore,
+        };
+      })
+    );
+
+    // Filter by city if specified
+    const filtered = args.city
+      ? placesWithScores.filter((p) => p.city === args.city)
+      : placesWithScores;
+
+    // Sort by dish score
+    const sorted = filtered.sort((a, b) => b.dishScore - a.dishScore).slice(0, limit);
+
+    return {
+      places: sorted,
+      dish: normalized,
+      totalCount: filtered.length,
+    };
+  },
+});
+
+/**
+ * Get dish quick-picks for home page
+ *
+ * Returns predefined popular dishes with localized labels
+ */
+export const getDishQuickPicks = query({
+  handler: async () => {
+    return [
+      { dish: "tagine", label: "Tagine", labelAr: "طاجين", labelFr: "Tajine" },
+      { dish: "couscous", label: "Couscous", labelAr: "كسكس", labelFr: "Couscous" },
+      { dish: "pastilla", label: "Pastilla", labelAr: "بسطيلة", labelFr: "Pastilla" },
+      { dish: "seafood", label: "Seafood", labelAr: "مأكولات بحرية", labelFr: "Fruits de mer" },
+      { dish: "coffee", label: "Coffee", labelAr: "قهوة", labelFr: "Café" },
+      { dish: "pastries", label: "Pastries", labelAr: "حلويات", labelFr: "Pâtisseries" },
+      { dish: "harira", label: "Harira", labelAr: "حريرة", labelFr: "Harira" },
+      { dish: "msemen", label: "Msemen", labelAr: "مسمن", labelFr: "Msemen" },
+    ];
+  },
+});
+
+// ============================================================================
 // Helper for Reviews Integration
 // ============================================================================
 
