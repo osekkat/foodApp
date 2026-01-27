@@ -15,3 +15,4 @@ export {
   MOROCCO_MAP_STYLES_DARK,
   MOROCCO_MAP_STYLES_MINIMAL,
 } from "./mapStyles";
+export { MapWithSearch, type MapWithSearchProps } from "./MapWithSearch";
