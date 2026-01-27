@@ -642,6 +642,242 @@ export const checkFeatureFlag = query({
   },
 });
 
+// ============================================================================
+// Public API for Photo Proxy Route Handler
+// These wrappers expose internal functions for use from Next.js API routes
+// ============================================================================
+
+import { mutation } from "./_generated/server";
+
+// Public query to check circuit breaker state (for API routes)
+export const getCircuitStatePublic = query({
+  args: { service: v.string() },
+  handler: async (ctx, args): Promise<CircuitState> => {
+    const health = await ctx.db
+      .query("systemHealth")
+      .withIndex("by_service", (q) => q.eq("service", args.service))
+      .first();
+
+    if (!health) return "closed";
+    if (health.healthy) return "closed";
+
+    // Check if we should try half-open
+    const now = Date.now();
+    const timeSinceUnhealthy = now - health.lastCheckedAt;
+
+    if (timeSinceUnhealthy >= CIRCUIT_BREAKER_CONFIG.halfOpenDelay) {
+      return "half_open";
+    }
+
+    return "open";
+  },
+});
+
+// Public query to check budget (for API routes)
+export const checkBudgetPublic = query({
+  args: { endpointClass: v.string() },
+  handler: async (ctx, args): Promise<BudgetCheckResult> => {
+    const limit = DAILY_BUDGET_LIMITS[args.endpointClass as EndpointClass] ?? 1000;
+
+    // Get today's usage from rate limits table
+    const todayKey = `budget:${args.endpointClass}:${new Date().toISOString().split('T')[0]}`;
+    const usage = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", todayKey))
+      .first();
+
+    const used = usage?.count ?? 0;
+    const usagePercent = (used / limit) * 100;
+
+    // Determine warning level
+    let warning = false;
+    let warningLevel: "approaching" | "critical" | undefined;
+
+    if (usagePercent >= 95) {
+      warning = true;
+      warningLevel = "critical";
+    } else if (usagePercent >= 80) {
+      warning = true;
+      warningLevel = "approaching";
+    }
+
+    return {
+      allowed: used < limit,
+      used,
+      limit,
+      usagePercent,
+      warning,
+      warningLevel,
+    };
+  },
+});
+
+// Public mutation to record circuit failure (for API routes)
+export const recordCircuitFailurePublic = mutation({
+  args: { service: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const failureKey = `circuit:failures:${args.service}`;
+
+    // Increment failure count
+    const existing = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", failureKey))
+      .first();
+
+    let consecutiveFailures = 1;
+    if (existing) {
+      consecutiveFailures = existing.count + 1;
+      await ctx.db.patch(existing._id, { count: consecutiveFailures });
+    } else {
+      await ctx.db.insert("rateLimits", {
+        key: failureKey,
+        windowStart: now,
+        count: 1,
+      });
+    }
+
+    // Check if we should open the circuit
+    const shouldOpen = consecutiveFailures >= CIRCUIT_BREAKER_CONFIG.failureThreshold;
+
+    // Update health record
+    const health = await ctx.db
+      .query("systemHealth")
+      .withIndex("by_service", (q) => q.eq("service", args.service))
+      .first();
+
+    if (health) {
+      await ctx.db.patch(health._id, {
+        healthy: !shouldOpen,
+        lastCheckedAt: now,
+      });
+    } else {
+      await ctx.db.insert("systemHealth", {
+        service: args.service,
+        healthy: !shouldOpen,
+        lastCheckedAt: now,
+      });
+    }
+
+    return { shouldOpen, consecutiveFailures };
+  },
+});
+
+// Public mutation to record circuit success (for API routes)
+export const recordCircuitSuccessPublic = mutation({
+  args: { service: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const failureKey = `circuit:failures:${args.service}`;
+    const halfOpenKey = `circuit:halfopen:${args.service}`;
+
+    // Reset failure count
+    const failureRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", failureKey))
+      .first();
+
+    if (failureRecord) {
+      await ctx.db.patch(failureRecord._id, { count: 0, windowStart: now });
+    }
+
+    // Reset half-open attempts
+    const halfOpenRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", halfOpenKey))
+      .first();
+
+    if (halfOpenRecord) {
+      await ctx.db.patch(halfOpenRecord._id, { count: 0, windowStart: now });
+    }
+
+    // Update health record to healthy
+    const health = await ctx.db
+      .query("systemHealth")
+      .withIndex("by_service", (q) => q.eq("service", args.service))
+      .first();
+
+    if (health) {
+      await ctx.db.patch(health._id, {
+        healthy: true,
+        lastCheckedAt: now,
+        lastHealthyAt: now,
+      });
+    } else {
+      await ctx.db.insert("systemHealth", {
+        service: args.service,
+        healthy: true,
+        lastCheckedAt: now,
+        lastHealthyAt: now,
+      });
+    }
+  },
+});
+
+// Public mutation to record budget usage (for API routes)
+export const recordBudgetUsagePublic = mutation({
+  args: {
+    endpointClass: v.string(),
+    cost: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const endpointClass = args.endpointClass as EndpointClass;
+    const limit = DAILY_BUDGET_LIMITS[endpointClass] ?? 1000;
+    const todayKey = `budget:${args.endpointClass}:${new Date().toISOString().split('T')[0]}`;
+
+    const existing = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", todayKey))
+      .first();
+
+    const previousCount = existing?.count ?? 0;
+    const newCount = previousCount + args.cost;
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        count: newCount,
+      });
+    } else {
+      await ctx.db.insert("rateLimits", {
+        key: todayKey,
+        windowStart: Date.now(),
+        count: args.cost,
+      });
+    }
+
+    // Check for auto-mitigation triggers (same logic as internal version)
+    const usagePercent = (newCount / limit) * 100;
+    const previousUsagePercent = (previousCount / limit) * 100;
+
+    // Trigger auto-mitigation when crossing 95% threshold
+    if (previousUsagePercent < 95 && usagePercent >= 95) {
+      const featuresToDisable = AUTO_MITIGATION_MAP[endpointClass] ?? [];
+      for (const featureKey of featuresToDisable) {
+        const existingFlag = await ctx.db
+          .query("featureFlags")
+          .withIndex("by_key", (q) => q.eq("key", featureKey))
+          .first();
+
+        const now = Date.now();
+        if (existingFlag) {
+          await ctx.db.patch(existingFlag._id, {
+            enabled: false,
+            reason: `budget_critical_${endpointClass}`,
+            updatedAt: now,
+          });
+        } else {
+          await ctx.db.insert("featureFlags", {
+            key: featureKey,
+            enabled: false,
+            reason: `budget_critical_${endpointClass}`,
+            updatedAt: now,
+          });
+        }
+      }
+    }
+  },
+});
+
 // Internal mutation to record budget usage and trigger auto-mitigation if needed
 export const recordBudgetUsage = internalMutation({
   args: {
