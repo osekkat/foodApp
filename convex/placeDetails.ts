@@ -315,7 +315,6 @@ export const fetchProviderDetails = action({
       ? "PLACE_DETAILS_WITH_PHOTOS"
       : "PLACE_DETAILS_STANDARD";
 
-    // @ts-expect-error - TypeScript depth limit with complex Convex types
     const result = await ctx.runAction(internal.providerGateway.providerRequest, {
       fieldSet,
       endpointClass: "place_details",

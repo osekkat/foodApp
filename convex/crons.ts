@@ -32,6 +32,7 @@ const crons = cronJobs();
 crons.interval(
   "evaluate_service_mode",
   { minutes: 1 },
+  // @ts-expect-error - TypeScript depth limit with complex Convex types
   internal.serviceMode.evaluateServiceMode
 );
 

@@ -123,3 +123,23 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* RTL Support */
+@layer utilities {
+  /* Arabic font family for RTL content */
+  [dir="rtl"] {
+    font-family: var(--font-arabic), var(--font-geist-sans), system-ui, sans-serif;
+  }
+
+  /* Icon flip utility for directional icons */
+  .rtl-flip {
+    [dir="rtl"] & {
+      transform: scaleX(-1);
+    }
+  }
+
+  /* Alternative using :is() for broader support */
+  :is([dir="rtl"] .rtl\:flip) {
+    transform: scaleX(-1);
+  }
+}
