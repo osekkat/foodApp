@@ -36,6 +36,19 @@ crons.interval(
 );
 
 /**
+ * Metrics Cleanup
+ *
+ * Runs daily at 2 AM UTC to delete raw metrics older than 7 days.
+ * Keeps data volume manageable while preserving recent data for analysis.
+ */
+crons.daily(
+  "cleanup_old_metrics",
+  { hourUTC: 2, minuteUTC: 0 },
+  internal.metrics.cleanupOldMetrics,
+  {} // No args - uses default 7-day retention
+);
+
+/**
  * Future cron jobs to implement:
  *
  * Geo Expiry Purge - Delete expired lat/lng from places table
