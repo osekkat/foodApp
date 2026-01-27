@@ -24,6 +24,7 @@ export default defineSchema({
   // Users table (managed by Convex Auth)
   users: defineTable({
     // Convex Auth required fields
+    tokenIdentifier: v.optional(v.string()), // Auth token identifier for user lookup
     name: v.optional(v.string()),
     email: v.optional(v.string()),
     emailVerificationTime: v.optional(v.number()),
@@ -33,13 +34,15 @@ export default defineSchema({
     isAnonymous: v.optional(v.boolean()),
     // App-specific fields
     locale: v.optional(v.string()), // "ar" | "fr" | "en"
+    role: v.optional(v.string()), // "user" | "admin" | "editor" | "moderator" - primary role for quick checks
     createdAt: v.optional(v.number()),
     lastActiveAt: v.optional(v.number()),
     reviewCount: v.optional(v.number()), // Denormalized for trust scoring
     helpfulVotesReceived: v.optional(v.number()), // Denormalized for trust scoring
   })
     .index("email", ["email"])
-    .index("phone", ["phone"]),
+    .index("phone", ["phone"])
+    .index("by_token", ["tokenIdentifier"]),
 
   // User reputation for trust tiers
   userReputation: defineTable({

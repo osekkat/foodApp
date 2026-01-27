@@ -9,7 +9,6 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
 export function ProfileSettings() {
-  // @ts-expect-error - TypeScript depth limit with complex Convex types
   const profile = useQuery(api.profile.getMyProfile);
   const updateProfile = useMutation(api.profile.updateProfile);
   const updatePreferences = useMutation(api.profile.updatePreferences);

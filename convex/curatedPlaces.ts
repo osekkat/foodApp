@@ -53,18 +53,10 @@ function validateSlug(slug: string): boolean {
 
 /**
  * Get authenticated user and check admin/editor role
+ * Uses the userRoles table for RBAC
  */
-async function requireEditor(ctx: {
-  auth: { getUserIdentity: () => Promise<unknown> };
-  db: {
-    query: (table: string) => {
-      withIndex: (
-        index: string,
-        fn: (q: { eq: (field: string, value: string) => unknown }) => unknown
-      ) => { first: () => Promise<{ _id: Id<"users">; role?: string } | null> };
-    };
-  };
-}) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function requireEditor(ctx: any) {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
     throw new Error("Authentication required");
@@ -73,16 +65,24 @@ async function requireEditor(ctx: {
 
   const user = await ctx.db
     .query("users")
-    .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+    .withIndex("by_token", (q: any) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
     .first();
 
   if (!user) {
     throw new Error("User not found");
   }
 
-  // Check role (admin or editor can manage curated content)
-  const role = user.role ?? "user";
-  if (role !== "admin" && role !== "editor") {
+  // Check role from userRoles table (admin or editor can manage curated content)
+  const userRoles = await ctx.db
+    .query("userRoles")
+    .withIndex("by_user", (q: any) => q.eq("userId", user._id))
+    .collect();
+
+  const hasEditorAccess = userRoles.some(
+    (r: { role: string }) => r.role === "admin" || r.role === "editor"
+  );
+
+  if (!hasEditorAccess) {
     throw new Error("Admin or editor role required");
   }
 
@@ -191,10 +191,11 @@ export const search = query({
 
     // Get all curated places (or filter by city)
     let places;
-    if (args.city) {
+    const city = args.city;
+    if (city) {
       places = await ctx.db
         .query("curatedPlaces")
-        .withIndex("by_city_featured", (q) => q.eq("city", args.city))
+        .withIndex("by_city_featured", (q) => q.eq("city", city))
         .collect();
     } else {
       places = await ctx.db.query("curatedPlaces").collect();
@@ -289,7 +290,6 @@ export const create = mutation({
       await ctx.db.insert("places", {
         placeKey,
         communityRatingCount: 0,
-        communityRatingSum: 0,
         favoritesCount: 0,
         createdAt: Date.now(),
         lastSeenAt: Date.now(),
@@ -414,7 +414,18 @@ export const remove = mutation({
       .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
       .first();
 
-    if (!user || user.role !== "admin") {
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Check for admin role in userRoles table
+    const userRoles = await ctx.db
+      .query("userRoles")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+
+    const isAdmin = userRoles.some((r) => r.role === "admin");
+    if (!isAdmin) {
       throw new Error("Admin role required to delete curated places");
     }
 
@@ -458,17 +469,30 @@ export const adminList = query({
       .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
       .first();
 
-    const role = user?.role ?? "user";
-    if (role !== "admin" && role !== "editor") {
+    if (!user) {
+      return [];
+    }
+
+    // Check for admin/editor role in userRoles table
+    const userRoles = await ctx.db
+      .query("userRoles")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+
+    const hasEditorAccess = userRoles.some(
+      (r) => r.role === "admin" || r.role === "editor"
+    );
+    if (!hasEditorAccess) {
       return [];
     }
 
     const limit = args.limit ?? 100;
+    const city = args.city;
 
-    if (args.city) {
+    if (city) {
       return ctx.db
         .query("curatedPlaces")
-        .withIndex("by_city_featured", (q) => q.eq("city", args.city))
+        .withIndex("by_city_featured", (q) => q.eq("city", city))
         .take(limit);
     }
 
@@ -494,8 +518,20 @@ export const getStats = query({
       .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
       .first();
 
-    const role = user?.role ?? "user";
-    if (role !== "admin" && role !== "editor") {
+    if (!user) {
+      return null;
+    }
+
+    // Check for admin/editor role in userRoles table
+    const userRoles = await ctx.db
+      .query("userRoles")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+
+    const hasEditorAccess = userRoles.some(
+      (r) => r.role === "admin" || r.role === "editor"
+    );
+    if (!hasEditorAccess) {
       return null;
     }
 
