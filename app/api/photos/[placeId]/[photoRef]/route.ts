@@ -253,8 +253,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const maxHeightPx = PHOTO_SIZE_MAP[size];
   const googlePhotoUrl = buildGooglePhotoUrl(placeId, photoRef, maxHeightPx, apiKey);
 
+  // Track whether we successfully contacted the Google API
+  // Used to determine if errors should affect circuit breaker
+  let googleApiSucceeded = false;
+  let photoUri: string | undefined;
+
+  // Phase 1: Contact Google Places API to get photo URI
   try {
-    // Fetch from Google with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -306,7 +311,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // Google Photos API with skipHttpRedirect returns JSON with photoUri
     const photoData = await googleResponse.json();
-    const photoUri = photoData.photoUri;
+    photoUri = photoData.photoUri;
 
     if (!photoUri) {
       console.error("No photoUri in Google response");
@@ -317,7 +322,46 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Fetch the actual image
+    // Mark Google API as successful
+    googleApiSucceeded = true;
+
+    // Record Google API success (we got a valid photoUri)
+    try {
+      await convex.mutation(api.providerGateway.recordCircuitSuccessPublic, {
+        service: "google_places",
+      });
+    } catch (error) {
+      console.error("Failed to record circuit success:", error);
+    }
+  } catch (error) {
+    // Google API call failed - record circuit breaker failure
+    try {
+      await convex.mutation(api.providerGateway.recordCircuitFailurePublic, {
+        service: "google_places",
+      });
+    } catch {
+      // Ignore circuit breaker recording errors
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      return finalize(
+        new NextResponse("Request timeout", { status: 504 }),
+        false,
+        "TIMEOUT"
+      );
+    }
+
+    console.error("Google API error:", error);
+    return finalize(
+      new NextResponse("Internal error", { status: 500 }),
+      false,
+      "INTERNAL_ERROR"
+    );
+  }
+
+  // Phase 2: Fetch actual image from Google's CDN
+  // This is a separate service, so errors here don't affect the Places API circuit breaker
+  try {
     const imageResponse = await fetch(photoUri, {
       signal: AbortSignal.timeout(10000),
     });
@@ -330,21 +374,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Record successful circuit breaker and budget usage
+    // Record budget usage after successful photo delivery
     try {
-      // Record circuit success (closes circuit if half-open)
-      await convex.mutation(api.providerGateway.recordCircuitSuccessPublic, {
-        service: "google_places",
-      });
-
-      // Record budget usage (cost: 7 millicents per photo fetch)
       await convex.mutation(api.providerGateway.recordBudgetUsagePublic, {
         endpointClass: "photos",
         cost: 7,
       });
     } catch (error) {
-      // Log but don't fail the request for tracking errors
-      console.error("Failed to record photo metrics:", error);
+      console.error("Failed to record budget usage:", error);
     }
 
     // Stream the image back with appropriate headers
@@ -374,28 +411,20 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return response;
   } catch (error) {
-    // Record circuit breaker failure for network errors
-    try {
-      await convex.mutation(api.providerGateway.recordCircuitFailurePublic, {
-        service: "google_places",
-      });
-    } catch {
-      // Ignore circuit breaker recording errors
-    }
-
+    // CDN error - don't record circuit breaker failure since Google API succeeded
     if (error instanceof Error && error.name === "AbortError") {
       return finalize(
-        new NextResponse("Request timeout", { status: 504 }),
+        new NextResponse("Image fetch timeout", { status: 504 }),
         false,
-        "TIMEOUT"
+        "CDN_TIMEOUT"
       );
     }
 
-    console.error("Photo proxy error:", error);
+    console.error("CDN fetch error:", error);
     return finalize(
-      new NextResponse("Internal error", { status: 500 }),
+      new NextResponse("Failed to fetch image", { status: 502 }),
       false,
-      "INTERNAL_ERROR"
+      "CDN_ERROR"
     );
   }
 }
