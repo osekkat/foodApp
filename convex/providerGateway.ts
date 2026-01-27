@@ -9,8 +9,8 @@
  * 5. Response bodies are NEVER logged (policy compliance)
  * 6. Localization defaults are applied
  *
- * Currently supported endpoint classes: place_details, text_search, autocomplete
- * TODO: Implement nearby_search, photos, health
+ * Currently supported endpoint classes: place_details, text_search, autocomplete, photos
+ * TODO: Implement nearby_search, health
  */
 
 import {
@@ -25,7 +25,7 @@ import {
 } from "./fieldSets";
 
 // Convex imports (now that Convex is initialized)
-import { query, internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { query, mutation, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 /**
@@ -647,8 +647,6 @@ export const checkFeatureFlag = query({
 // These wrappers expose internal functions for use from Next.js API routes
 // ============================================================================
 
-import { mutation } from "./_generated/server";
-
 // Public query to check circuit breaker state (for API routes)
 export const getCircuitStatePublic = query({
   args: { service: v.string() },
@@ -870,6 +868,33 @@ export const recordBudgetUsagePublic = mutation({
             key: featureKey,
             enabled: false,
             reason: `budget_critical_${endpointClass}`,
+            updatedAt: now,
+          });
+        }
+      }
+    }
+
+    // When budget is exceeded (100%), disable features
+    if (previousCount < limit && newCount >= limit) {
+      const featuresToDisable = AUTO_MITIGATION_MAP[endpointClass] ?? [];
+      for (const featureKey of featuresToDisable) {
+        const existingFlag = await ctx.db
+          .query("featureFlags")
+          .withIndex("by_key", (q) => q.eq("key", featureKey))
+          .first();
+
+        const now = Date.now();
+        if (existingFlag) {
+          await ctx.db.patch(existingFlag._id, {
+            enabled: false,
+            reason: `budget_exceeded_${endpointClass}`,
+            updatedAt: now,
+          });
+        } else {
+          await ctx.db.insert("featureFlags", {
+            key: featureKey,
+            enabled: false,
+            reason: `budget_exceeded_${endpointClass}`,
             updatedAt: now,
           });
         }
