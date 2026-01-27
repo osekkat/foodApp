@@ -206,6 +206,14 @@ export const createPhotosForReview = mutation({
     const user = await requireAuthUser(ctx);
     const now = Date.now();
 
+    // Validate placeKey format (same validation as createPhoto)
+    if (!args.placeKey.startsWith("g:") && !args.placeKey.startsWith("c:")) {
+      throw new ConvexError({
+        code: "INVALID_PLACE_KEY",
+        message: "placeKey must start with 'g:' or 'c:'",
+      });
+    }
+
     // Validate batch size
     if (args.storageIds.length > MAX_PHOTOS_PER_REVIEW) {
       throw new ConvexError({
