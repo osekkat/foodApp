@@ -1,0 +1,22 @@
+import { defineConfig } from "vitest/config";
+import path from "path";
+
+export default defineConfig({
+  test: {
+    environment: "node",
+    globals: true,
+    include: ["tests/**/*.test.ts", "tests/**/*.spec.ts"],
+    exclude: ["node_modules", ".next", "convex/_generated"],
+    coverage: {
+      reporter: ["text", "json", "html"],
+      exclude: ["node_modules", "convex/_generated", "tests"],
+    },
+    // Compliance tests are critical - fail fast
+    bail: 1,
+  },
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "."),
+    },
+  },
+});
