@@ -487,6 +487,7 @@ export const getListItems = query({
 
 /**
  * Check if a place is in a specific list
+ * Respects list visibility - only owner can check private lists
  */
 export const isInList = query({
   args: {
@@ -494,6 +495,25 @@ export const isInList = query({
     placeKey: v.string(),
   },
   handler: async (ctx, args) => {
+    const list = await ctx.db.get(args.listId);
+    if (!list) return false;
+
+    // Check visibility - only owner can check private lists
+    if (list.visibility === "private") {
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) return false;
+      const tokenId = identity as { tokenIdentifier?: string };
+
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+        .first();
+
+      if (!user || user._id !== list.userId) {
+        return false;
+      }
+    }
+
     const item = await ctx.db
       .query("listItems")
       .withIndex("by_list_place", (q) => q.eq("listId", args.listId).eq("placeKey", args.placeKey))

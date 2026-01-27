@@ -11,9 +11,11 @@
 import type * as auth from "../auth.js";
 import type * as cities from "../cities.js";
 import type * as crons from "../crons.js";
+import type * as curatedPlaces from "../curatedPlaces.js";
 import type * as featureFlags from "../featureFlags.js";
 import type * as fieldSets from "../fieldSets.js";
 import type * as http from "../http.js";
+import type * as lists from "../lists.js";
 import type * as metrics from "../metrics.js";
 import type * as places from "../places.js";
 import type * as providerGateway from "../providerGateway.js";
@@ -31,9 +33,11 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   cities: typeof cities;
   crons: typeof crons;
+  curatedPlaces: typeof curatedPlaces;
   featureFlags: typeof featureFlags;
   fieldSets: typeof fieldSets;
   http: typeof http;
+  lists: typeof lists;
   metrics: typeof metrics;
   places: typeof places;
   providerGateway: typeof providerGateway;

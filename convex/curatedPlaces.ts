@@ -137,22 +137,31 @@ export const getBySlug = query({
 
 /**
  * Get a curated place by ID
+ * Only returns published places for public access
  */
 export const getById = query({
   args: { id: v.id("curatedPlaces") },
   handler: async (ctx, args) => {
-    return ctx.db.get(args.id);
+    const place = await ctx.db.get(args.id);
+    if (!place) return null;
+
+    // Only return if published
+    if (place.publishedAt && place.publishedAt <= Date.now()) {
+      return place;
+    }
+
+    return null;
   },
 });
 
 /**
  * List curated places for a city (paginated)
+ * Always returns only published places - use adminList for drafts
  */
 export const listByCity = query({
   args: {
     city: v.string(),
     limit: v.optional(v.number()),
-    includeDrafts: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 50;
@@ -162,12 +171,8 @@ export const listByCity = query({
       .withIndex("by_city_featured", (q) => q.eq("city", args.city))
       .take(limit);
 
-    // Filter out drafts unless requested
-    if (!args.includeDrafts) {
-      return places.filter((p) => p.publishedAt && p.publishedAt <= Date.now());
-    }
-
-    return places;
+    // Only return published places
+    return places.filter((p) => p.publishedAt && p.publishedAt <= Date.now());
   },
 });
 
@@ -433,6 +438,7 @@ export const remove = mutation({
 
 /**
  * List all curated places for admin (includes drafts)
+ * Requires admin or editor role
  */
 export const adminList = query({
   args: {
@@ -440,7 +446,23 @@ export const adminList = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Note: In production, should verify admin role
+    // Verify admin/editor role
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return [];
+    }
+    const tokenId = identity as { tokenIdentifier?: string };
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+      .first();
+
+    const role = user?.role ?? "user";
+    if (role !== "admin" && role !== "editor") {
+      return [];
+    }
+
     const limit = args.limit ?? 100;
 
     if (args.city) {
@@ -456,9 +478,27 @@ export const adminList = query({
 
 /**
  * Get curated place stats
+ * Requires admin or editor role
  */
 export const getStats = query({
   handler: async (ctx) => {
+    // Verify admin/editor role
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return null;
+    }
+    const tokenId = identity as { tokenIdentifier?: string };
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+      .first();
+
+    const role = user?.role ?? "user";
+    if (role !== "admin" && role !== "editor") {
+      return null;
+    }
+
     const allPlaces = await ctx.db.query("curatedPlaces").collect();
 
     const published = allPlaces.filter((p) => p.publishedAt && p.publishedAt <= Date.now());
