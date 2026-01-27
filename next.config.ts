@@ -6,7 +6,32 @@ import type { NextConfig } from "next";
 // CSP directives compatible with Google Maps JavaScript API
 // See: https://developers.google.com/maps/documentation/javascript/content-security-policy
 
-const ContentSecurityPolicy = {
+const isProduction = process.env.NODE_ENV === "production";
+
+function safeOrigin(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function toWebSocketOrigin(origin: string): string | null {
+  try {
+    const url = new URL(origin);
+    if (url.protocol === "http:") url.protocol = "ws:";
+    if (url.protocol === "https:") url.protocol = "wss:";
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+const convexOrigin = safeOrigin(process.env.NEXT_PUBLIC_CONVEX_URL);
+const convexWsOrigin = convexOrigin ? toWebSocketOrigin(convexOrigin) : null;
+
+const ContentSecurityPolicy: Record<string, string[]> = {
   "default-src": ["'self'"],
   "script-src": [
     "'self'",
@@ -35,6 +60,7 @@ const ContentSecurityPolicy = {
     "https://maps.googleapis.com",
     "https://places.googleapis.com",
     "https://*.convex.cloud", // Convex backend
+    "https://*.convex.site", // Convex sites (auth/actions)
     "wss://*.convex.cloud", // Convex WebSocket connections
     // Allow Sentry for error tracking (if configured)
     "https://*.sentry.io",
@@ -46,8 +72,19 @@ const ContentSecurityPolicy = {
   "base-uri": ["'self'"],
   "form-action": ["'self'"],
   "object-src": ["'none'"], // Disallow plugins (Flash, etc.)
-  "upgrade-insecure-requests": [], // Force HTTPS
 };
+
+if (convexOrigin) {
+  ContentSecurityPolicy["connect-src"].push(convexOrigin);
+}
+if (convexWsOrigin) {
+  ContentSecurityPolicy["connect-src"].push(convexWsOrigin);
+}
+
+// Only force HTTPS in production to avoid breaking local dev
+if (isProduction) {
+  ContentSecurityPolicy["upgrade-insecure-requests"] = [];
+}
 
 /**
  * Build CSP string from directives object
@@ -73,6 +110,15 @@ const securityHeaders = [
     key: "X-DNS-Prefetch-Control",
     value: "on",
   },
+  // Enforce HTTPS (only effective over HTTPS)
+  ...(isProduction
+    ? [
+        {
+          key: "Strict-Transport-Security",
+          value: "max-age=31536000; includeSubDomains; preload",
+        },
+      ]
+    : []),
   // Prevent MIME type sniffing
   {
     key: "X-Content-Type-Options",
