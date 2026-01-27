@@ -1,22 +1,22 @@
-export const metadata = {
-  title: "Profile",
-  description: "Your profile and settings",
-};
+"use client";
+
+import dynamic from "next/dynamic";
+
+// Dynamically import to avoid SSR issues with auth hooks
+const ProfileContent = dynamic(
+  () => import("@/components/auth/ProfileContent"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-screen bg-white dark:bg-black">
+        <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+          <p className="text-zinc-600 dark:text-zinc-400">Loading...</p>
+        </div>
+      </div>
+    ),
+  }
+);
 
 export default function ProfilePage() {
-  return (
-    <div className="min-h-screen bg-white dark:bg-black">
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
-          Profile
-        </h1>
-        <p className="mt-4 text-zinc-600 dark:text-zinc-400">
-          Profile functionality coming soon...
-        </p>
-        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-500">
-          Sign out button will be available once authentication is configured.
-        </p>
-      </div>
-    </div>
-  );
+  return <ProfileContent />;
 }

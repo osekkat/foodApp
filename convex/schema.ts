@@ -440,4 +440,52 @@ export default defineSchema({
     }),
     transitionedAt: v.number(),
   }).index("by_recent", ["transitionedAt"]),
+
+  // ===========================================
+  // Metrics & Observability
+  // ===========================================
+
+  // Time-series metrics for performance, cost, and business tracking
+  // NOTE: High-volume table - consider retention policies
+  metrics: defineTable({
+    name: v.string(), // e.g. "search_latency", "api_cost", "cache_hit_rate"
+    value: v.number(),
+    // Optional tags for filtering/grouping
+    tags: v.optional(
+      v.object({
+        endpoint: v.optional(v.string()), // e.g. "place_details", "text_search"
+        costTier: v.optional(v.string()), // e.g. "basic", "preferred", "premium"
+        cacheHit: v.optional(v.boolean()),
+        serviceMode: v.optional(v.number()), // 0-3
+        city: v.optional(v.string()),
+      })
+    ),
+    timestamp: v.number(),
+  })
+    .index("by_name_time", ["name", "timestamp"])
+    .index("by_time", ["timestamp"]),
+
+  // Aggregated metrics (hourly/daily rollups for dashboards)
+  metricsAggregates: defineTable({
+    name: v.string(),
+    period: v.string(), // "hour" | "day"
+    periodStart: v.number(), // Unix timestamp of period start
+    count: v.number(),
+    sum: v.number(),
+    min: v.number(),
+    max: v.number(),
+    // Percentiles for latency metrics
+    p50: v.optional(v.number()),
+    p95: v.optional(v.number()),
+    p99: v.optional(v.number()),
+    // Tags for grouping
+    tags: v.optional(
+      v.object({
+        endpoint: v.optional(v.string()),
+      })
+    ),
+    updatedAt: v.number(),
+  })
+    .index("by_name_period", ["name", "period", "periodStart"])
+    .index("by_period_start", ["period", "periodStart"]),
 });

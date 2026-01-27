@@ -8,11 +8,15 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
 import type * as cities from "../cities.js";
+import type * as crons from "../crons.js";
 import type * as featureFlags from "../featureFlags.js";
 import type * as fieldSets from "../fieldSets.js";
+import type * as http from "../http.js";
 import type * as places from "../places.js";
 import type * as providerGateway from "../providerGateway.js";
+import type * as serviceMode from "../serviceMode.js";
 import type * as systemHealth from "../systemHealth.js";
 
 import type {
@@ -22,11 +26,15 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
   cities: typeof cities;
+  crons: typeof crons;
   featureFlags: typeof featureFlags;
   fieldSets: typeof fieldSets;
+  http: typeof http;
   places: typeof places;
   providerGateway: typeof providerGateway;
+  serviceMode: typeof serviceMode;
   systemHealth: typeof systemHealth;
 }>;
 

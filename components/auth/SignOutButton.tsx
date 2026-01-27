@@ -2,15 +2,6 @@
 
 import { useAuthActions } from "@convex-dev/auth/react";
 
-/**
- * Sign Out Button
- *
- * NOTE: This component requires ConvexAuthNextjsProvider to be configured.
- * Currently, AuthProvider uses plain ConvexProvider (auth not yet configured).
- * Do not use this component until AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET are set
- * in Convex environment variables and AuthProvider is switched to use
- * ConvexAuthNextjsProvider.
- */
 export function SignOutButton() {
   const { signOut } = useAuthActions();
 
