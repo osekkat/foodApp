@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAction } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import {
   SearchSessionManager,
   type AutocompleteResult,
@@ -98,6 +96,9 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Request counter to handle race conditions with isLoading
+  const requestCounterRef = useRef(0);
+
   // Initialize session manager
   useEffect(() => {
     sessionManagerRef.current = new SearchSessionManager();
@@ -105,10 +106,6 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
       sessionManagerRef.current?.clearSession();
     };
   }, []);
-
-  // Note: providerRequest is internal, so we'll need a public action
-  // For now, we'll create the hook structure and the action can be added later
-  // const autocomplete = useAction(api.providerGateway.providerRequest);
 
   /**
    * Perform autocomplete request
@@ -118,6 +115,10 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
       if (!sessionManagerRef.current) return;
 
       const sessionManager = sessionManagerRef.current;
+
+      // Increment counter and capture this request's ID
+      requestCounterRef.current += 1;
+      const thisRequestId = requestCounterRef.current;
 
       try {
         setIsLoading(true);
@@ -138,9 +139,10 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
         //   ...(includedPrimaryTypes && { includedPrimaryTypes }),
         // });
 
-        // Placeholder: In production, parse the actual API response
-        // For now, return empty suggestions until the action is connected
-        if (signal.aborted) return;
+        // Check if this request was superseded by a newer one
+        if (signal.aborted || thisRequestId !== requestCounterRef.current) {
+          return;
+        }
 
         // Mock empty response - replace with actual API call
         setSuggestions([]);
@@ -149,10 +151,16 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
         if (err instanceof Error && err.name === "AbortError") {
           return;
         }
-        setError(err instanceof Error ? err.message : "Search failed");
-        setSuggestions([]);
+        // Only update error if this is still the current request
+        if (thisRequestId === requestCounterRef.current) {
+          setError(err instanceof Error ? err.message : "Search failed");
+          setSuggestions([]);
+        }
       } finally {
-        setIsLoading(false);
+        // Only set loading false if this is still the current request
+        if (thisRequestId === requestCounterRef.current) {
+          setIsLoading(false);
+        }
       }
     },
     [language, locationBias, includedPrimaryTypes]

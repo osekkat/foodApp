@@ -9,8 +9,8 @@
  * 5. Response bodies are NEVER logged (policy compliance)
  * 6. Localization defaults are applied
  *
- * Currently supported endpoint classes: place_details, text_search
- * TODO: Implement nearby_search, autocomplete, photos, health
+ * Currently supported endpoint classes: place_details, text_search, autocomplete
+ * TODO: Implement nearby_search, photos, health
  */
 
 import {
@@ -900,9 +900,6 @@ export const providerRequest = internalAction({
       service: "google_places",
     });
 
-    // Track if this is a half-open test request
-    let isHalfOpenTest = false;
-
     if (circuitState === "open") {
       return finalize({
         success: false,
@@ -924,7 +921,6 @@ export const providerRequest = internalAction({
 
     if (circuitState === "half_open") {
       // Allow this request as a test - record the attempt
-      isHalfOpenTest = true;
       await ctx.runMutation(internal.providerGateway.recordHalfOpenAttempt, {
         service: "google_places",
       });
@@ -979,7 +975,9 @@ export const providerRequest = internalAction({
 
     // Build request
     const fieldMask = getFieldMask(fieldSetKey);
-    const headers = buildHeaders(apiKey, fieldMask, args.sessionToken);
+    // For autocomplete, session token goes in body, not header
+    const sessionTokenForHeader = endpointClass === "autocomplete" ? undefined : args.sessionToken;
+    const headers = buildHeaders(apiKey, fieldMask, sessionTokenForHeader);
     const language = args.language ?? "en";
     const regionCode = args.regionCode ?? "MA";
 
