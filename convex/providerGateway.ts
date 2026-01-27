@@ -101,6 +101,27 @@ export interface ProviderResult<T> {
 }
 
 /**
+ * Emit safe, redacted metrics for every provider call.
+ * NOTE: Never log provider response bodies or provider content fields.
+ */
+function emitProviderMetric(result: ProviderResult<unknown>) {
+  const { metadata, success, error } = result;
+  const payload = {
+    requestId: metadata.requestId,
+    success,
+    errorCode: error?.code,
+    endpointClass: metadata.endpointClass,
+    fieldSet: metadata.fieldSet,
+    costClass: metadata.costClass,
+    latencyMs: metadata.latencyMs,
+    cacheHit: metadata.cacheHit,
+  };
+
+  // Structured log for metrics collection (safe metadata only).
+  console.info("provider_gateway_metric", JSON.stringify(payload));
+}
+
+/**
  * Circuit breaker states
  */
 export type CircuitState = "closed" | "open" | "half_open";
@@ -206,10 +227,112 @@ export function statusToErrorCode(status: number): string {
 }
 
 // ============================================================================
+// Circuit Breaker Configuration
+// ============================================================================
+
+/**
+ * Circuit breaker thresholds
+ */
+const CIRCUIT_BREAKER_CONFIG = {
+  /** Number of consecutive failures before opening circuit */
+  failureThreshold: 5,
+  /** Time window for error rate calculation (ms) */
+  errorRateWindow: 60000, // 1 minute
+  /** Error rate threshold (0-1) before opening circuit */
+  errorRateThreshold: 0.5,
+  /** Time to wait in open state before trying half-open (ms) */
+  halfOpenDelay: 30000, // 30 seconds
+  /** Number of successful requests needed in half-open to close */
+  halfOpenSuccessThreshold: 1,
+};
+
+/**
+ * Circuit breaker state with detailed tracking
+ */
+export interface CircuitBreakerState {
+  state: CircuitState;
+  consecutiveFailures: number;
+  lastFailureAt?: number;
+  lastSuccessAt?: number;
+  openedAt?: number;
+  halfOpenAttempts: number;
+}
+
+// ============================================================================
 // Convex Functions (now active)
 // ============================================================================
 
-// Internal query to check circuit breaker state
+// Internal query to get circuit breaker detailed state
+export const getCircuitBreakerState = internalQuery({
+  args: { service: v.string() },
+  handler: async (ctx, args): Promise<CircuitBreakerState> => {
+    const health = await ctx.db
+      .query("systemHealth")
+      .withIndex("by_service", (q) => q.eq("service", args.service))
+      .first();
+
+    // Get failure count from rateLimits
+    const failureKey = `circuit:failures:${args.service}`;
+    const failureRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", failureKey))
+      .first();
+
+    // Get half-open attempt count
+    const halfOpenKey = `circuit:halfopen:${args.service}`;
+    const halfOpenRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", halfOpenKey))
+      .first();
+
+    if (!health) {
+      return {
+        state: "closed",
+        consecutiveFailures: 0,
+        halfOpenAttempts: 0,
+      };
+    }
+
+    const now = Date.now();
+    const consecutiveFailures = failureRecord?.count ?? 0;
+    const halfOpenAttempts = halfOpenRecord?.count ?? 0;
+
+    // Determine state
+    if (health.healthy) {
+      return {
+        state: "closed",
+        consecutiveFailures: 0,
+        lastSuccessAt: health.lastHealthyAt,
+        halfOpenAttempts: 0,
+      };
+    }
+
+    // Circuit is unhealthy - check if we should try half-open
+    const timeSinceUnhealthy = now - health.lastCheckedAt;
+
+    if (timeSinceUnhealthy >= CIRCUIT_BREAKER_CONFIG.halfOpenDelay) {
+      return {
+        state: "half_open",
+        consecutiveFailures,
+        lastFailureAt: health.lastCheckedAt,
+        lastSuccessAt: health.lastHealthyAt,
+        openedAt: health.lastCheckedAt,
+        halfOpenAttempts,
+      };
+    }
+
+    return {
+      state: "open",
+      consecutiveFailures,
+      lastFailureAt: health.lastCheckedAt,
+      lastSuccessAt: health.lastHealthyAt,
+      openedAt: health.lastCheckedAt,
+      halfOpenAttempts,
+    };
+  },
+});
+
+// Simplified query for just the state (backward compatible)
 export const getCircuitState = internalQuery({
   args: { service: v.string() },
   handler: async (ctx, args): Promise<CircuitState> => {
@@ -218,13 +341,148 @@ export const getCircuitState = internalQuery({
       .withIndex("by_service", (q) => q.eq("service", args.service))
       .first();
 
-    if (!health) return "closed"; // Default to closed (allow requests)
-    if (!health.healthy) return "open";
-    return "closed";
+    if (!health) return "closed";
+    if (health.healthy) return "closed";
+
+    // Check if we should try half-open
+    const now = Date.now();
+    const timeSinceUnhealthy = now - health.lastCheckedAt;
+
+    if (timeSinceUnhealthy >= CIRCUIT_BREAKER_CONFIG.halfOpenDelay) {
+      return "half_open";
+    }
+
+    return "open";
   },
 });
 
-// Internal mutation to update circuit breaker state
+// Internal mutation to record circuit breaker failure
+export const recordCircuitFailure = internalMutation({
+  args: { service: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const failureKey = `circuit:failures:${args.service}`;
+
+    // Increment failure count
+    const existing = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", failureKey))
+      .first();
+
+    let consecutiveFailures = 1;
+    if (existing) {
+      consecutiveFailures = existing.count + 1;
+      await ctx.db.patch(existing._id, { count: consecutiveFailures });
+    } else {
+      await ctx.db.insert("rateLimits", {
+        key: failureKey,
+        windowStart: now,
+        count: 1,
+      });
+    }
+
+    // Check if we should open the circuit
+    const shouldOpen = consecutiveFailures >= CIRCUIT_BREAKER_CONFIG.failureThreshold;
+
+    // Update health record
+    const health = await ctx.db
+      .query("systemHealth")
+      .withIndex("by_service", (q) => q.eq("service", args.service))
+      .first();
+
+    if (health) {
+      await ctx.db.patch(health._id, {
+        healthy: !shouldOpen,
+        lastCheckedAt: now,
+      });
+    } else {
+      await ctx.db.insert("systemHealth", {
+        service: args.service,
+        healthy: !shouldOpen,
+        lastCheckedAt: now,
+      });
+    }
+
+    return { shouldOpen, consecutiveFailures };
+  },
+});
+
+// Internal mutation to record circuit breaker success
+export const recordCircuitSuccess = internalMutation({
+  args: { service: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const failureKey = `circuit:failures:${args.service}`;
+    const halfOpenKey = `circuit:halfopen:${args.service}`;
+
+    // Reset failure count
+    const failureRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", failureKey))
+      .first();
+
+    if (failureRecord) {
+      await ctx.db.patch(failureRecord._id, { count: 0, windowStart: now });
+    }
+
+    // Reset half-open attempts
+    const halfOpenRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", halfOpenKey))
+      .first();
+
+    if (halfOpenRecord) {
+      await ctx.db.patch(halfOpenRecord._id, { count: 0, windowStart: now });
+    }
+
+    // Update health record to healthy
+    const health = await ctx.db
+      .query("systemHealth")
+      .withIndex("by_service", (q) => q.eq("service", args.service))
+      .first();
+
+    if (health) {
+      await ctx.db.patch(health._id, {
+        healthy: true,
+        lastCheckedAt: now,
+        lastHealthyAt: now,
+      });
+    } else {
+      await ctx.db.insert("systemHealth", {
+        service: args.service,
+        healthy: true,
+        lastCheckedAt: now,
+        lastHealthyAt: now,
+      });
+    }
+  },
+});
+
+// Internal mutation to record half-open test attempt
+export const recordHalfOpenAttempt = internalMutation({
+  args: { service: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const halfOpenKey = `circuit:halfopen:${args.service}`;
+
+    const existing = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", halfOpenKey))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, { count: existing.count + 1 });
+    } else {
+      await ctx.db.insert("rateLimits", {
+        key: halfOpenKey,
+        windowStart: now,
+        count: 1,
+      });
+    }
+  },
+});
+
+// Legacy mutation for backward compatibility
 export const updateCircuitState = internalMutation({
   args: {
     service: v.string(),
@@ -255,10 +513,22 @@ export const updateCircuitState = internalMutation({
   },
 });
 
-// Internal query to check daily budget usage
+/**
+ * Budget check result with warning thresholds
+ */
+export interface BudgetCheckResult {
+  allowed: boolean;
+  used: number;
+  limit: number;
+  usagePercent: number;
+  warning: boolean;
+  warningLevel?: "approaching" | "critical";
+}
+
+// Internal query to check daily budget usage with warning thresholds
 export const checkBudget = internalQuery({
   args: { endpointClass: v.string() },
-  handler: async (ctx, args): Promise<{ allowed: boolean; used: number; limit: number }> => {
+  handler: async (ctx, args): Promise<BudgetCheckResult> => {
     const limit = DAILY_BUDGET_LIMITS[args.endpointClass as EndpointClass] ?? 1000;
 
     // Get today's usage from rate limits table
@@ -269,30 +539,114 @@ export const checkBudget = internalQuery({
       .first();
 
     const used = usage?.count ?? 0;
+    const usagePercent = (used / limit) * 100;
+
+    // Determine warning level
+    let warning = false;
+    let warningLevel: "approaching" | "critical" | undefined;
+
+    if (usagePercent >= 95) {
+      warning = true;
+      warningLevel = "critical";
+    } else if (usagePercent >= 80) {
+      warning = true;
+      warningLevel = "approaching";
+    }
+
     return {
       allowed: used < limit,
       used,
       limit,
+      usagePercent,
+      warning,
+      warningLevel,
     };
   },
 });
 
-// Internal mutation to record budget usage
+/**
+ * Auto-mitigation: Map endpoint classes to features that can be disabled
+ * When budget is exceeded, these features are disabled in priority order
+ */
+const AUTO_MITIGATION_MAP: Record<EndpointClass, string[]> = {
+  photos: ["photos_enabled"], // Disable photos first (expensive, least critical)
+  nearby_search: ["nearby_search_enabled"],
+  text_search: ["text_search_enabled"],
+  place_details: ["place_details_enhanced"], // Reduce to basic details only
+  autocomplete: [], // Autocomplete is cheap, don't disable
+  health: [], // Never disable health checks
+};
+
+// Internal mutation to update feature flag
+export const updateFeatureFlag = internalMutation({
+  args: {
+    key: v.string(),
+    enabled: v.boolean(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("featureFlags")
+      .withIndex("by_key", (q) => q.eq("key", args.key))
+      .first();
+
+    const now = Date.now();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        enabled: args.enabled,
+        reason: args.reason,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("featureFlags", {
+        key: args.key,
+        enabled: args.enabled,
+        reason: args.reason,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
+// Internal query to get feature flag status
+export const getFeatureFlag = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, args): Promise<{ enabled: boolean; reason?: string }> => {
+    const flag = await ctx.db
+      .query("featureFlags")
+      .withIndex("by_key", (q) => q.eq("key", args.key))
+      .first();
+
+    return {
+      enabled: flag?.enabled ?? true, // Default to enabled
+      reason: flag?.reason,
+    };
+  },
+});
+
+// Internal mutation to record budget usage and trigger auto-mitigation if needed
 export const recordBudgetUsage = internalMutation({
   args: {
     endpointClass: v.string(),
     cost: v.number(),
   },
   handler: async (ctx, args) => {
+    const endpointClass = args.endpointClass as EndpointClass;
+    const limit = DAILY_BUDGET_LIMITS[endpointClass] ?? 1000;
     const todayKey = `budget:${args.endpointClass}:${new Date().toISOString().split('T')[0]}`;
+
     const existing = await ctx.db
       .query("rateLimits")
       .withIndex("by_key", (q) => q.eq("key", todayKey))
       .first();
 
+    const previousCount = existing?.count ?? 0;
+    const newCount = previousCount + args.cost;
+
     if (existing) {
       await ctx.db.patch(existing._id, {
-        count: existing.count + args.cost,
+        count: newCount,
       });
     } else {
       await ctx.db.insert("rateLimits", {
@@ -300,6 +654,64 @@ export const recordBudgetUsage = internalMutation({
         windowStart: Date.now(),
         count: args.cost,
       });
+    }
+
+    // Check for auto-mitigation triggers
+    const usagePercent = (newCount / limit) * 100;
+    const previousUsagePercent = (previousCount / limit) * 100;
+
+    // Trigger auto-mitigation when crossing 95% threshold
+    if (previousUsagePercent < 95 && usagePercent >= 95) {
+      const featuresToDisable = AUTO_MITIGATION_MAP[endpointClass] ?? [];
+      for (const featureKey of featuresToDisable) {
+        const existingFlag = await ctx.db
+          .query("featureFlags")
+          .withIndex("by_key", (q) => q.eq("key", featureKey))
+          .first();
+
+        const now = Date.now();
+        if (existingFlag) {
+          await ctx.db.patch(existingFlag._id, {
+            enabled: false,
+            reason: `budget_critical_${endpointClass}`,
+            updatedAt: now,
+          });
+        } else {
+          await ctx.db.insert("featureFlags", {
+            key: featureKey,
+            enabled: false,
+            reason: `budget_critical_${endpointClass}`,
+            updatedAt: now,
+          });
+        }
+      }
+    }
+
+    // When budget is exceeded (100%), disable features
+    if (previousCount < limit && newCount >= limit) {
+      const featuresToDisable = AUTO_MITIGATION_MAP[endpointClass] ?? [];
+      for (const featureKey of featuresToDisable) {
+        const existingFlag = await ctx.db
+          .query("featureFlags")
+          .withIndex("by_key", (q) => q.eq("key", featureKey))
+          .first();
+
+        const now = Date.now();
+        if (existingFlag) {
+          await ctx.db.patch(existingFlag._id, {
+            enabled: false,
+            reason: `budget_exceeded_${endpointClass}`,
+            updatedAt: now,
+          });
+        } else {
+          await ctx.db.insert("featureFlags", {
+            key: featureKey,
+            enabled: false,
+            reason: `budget_exceeded_${endpointClass}`,
+            updatedAt: now,
+          });
+        }
+      }
     }
   },
 });
@@ -333,10 +745,14 @@ export const providerRequest = internalAction({
   handler: async (ctx, args): Promise<ProviderResult<unknown>> => {
     const requestId = generateRequestId();
     const startTime = Date.now();
+    const finalize = (result: ProviderResult<unknown>) => {
+      emitProviderMetric(result);
+      return result;
+    };
 
     // Validate field set is in registry
     if (!(args.fieldSet in FIELD_SETS)) {
-      return {
+      return finalize({
         success: false,
         error: {
           code: "INVALID_FIELD_SET",
@@ -351,7 +767,7 @@ export const providerRequest = internalAction({
           endpointClass: args.endpointClass as EndpointClass,
           cacheHit: false,
         },
-      };
+      });
     }
 
     const fieldSetKey = args.fieldSet as FieldSetKey;
@@ -360,7 +776,7 @@ export const providerRequest = internalAction({
     // Validate endpoint class
     const validEndpointClasses = Object.values(ENDPOINT_CLASSES);
     if (!validEndpointClasses.includes(endpointClass)) {
-      return {
+      return finalize({
         success: false,
         error: {
           code: "INVALID_ENDPOINT_CLASS",
@@ -375,13 +791,13 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
     }
 
     // Check if endpoint class is implemented
     const implementedEndpoints: EndpointClass[] = ["place_details", "text_search"];
     if (!implementedEndpoints.includes(endpointClass)) {
-      return {
+      return finalize({
         success: false,
         error: {
           code: "ENDPOINT_NOT_IMPLEMENTED",
@@ -396,12 +812,12 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
     }
 
     // Validate required parameters for implemented endpoints
     if (endpointClass === "place_details" && !args.placeId) {
-      return {
+      return finalize({
         success: false,
         error: {
           code: "MISSING_PARAMETER",
@@ -416,10 +832,10 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
     }
     if (endpointClass === "text_search" && !args.query) {
-      return {
+      return finalize({
         success: false,
         error: {
           code: "MISSING_PARAMETER",
@@ -434,7 +850,7 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
     }
 
     // Check circuit breaker
@@ -442,8 +858,11 @@ export const providerRequest = internalAction({
       service: "google_places",
     });
 
+    // Track if this is a half-open test request
+    let isHalfOpenTest = false;
+
     if (circuitState === "open") {
-      return {
+      return finalize({
         success: false,
         error: {
           code: "CIRCUIT_OPEN",
@@ -458,7 +877,15 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
+    }
+
+    if (circuitState === "half_open") {
+      // Allow this request as a test - record the attempt
+      isHalfOpenTest = true;
+      await ctx.runMutation(internal.providerGateway.recordHalfOpenAttempt, {
+        service: "google_places",
+      });
     }
 
     // Check budget
@@ -468,7 +895,7 @@ export const providerRequest = internalAction({
       });
 
       if (!budget.allowed) {
-        return {
+        return finalize({
           success: false,
           error: {
             code: "BUDGET_EXCEEDED",
@@ -483,14 +910,14 @@ export const providerRequest = internalAction({
             endpointClass,
             cacheHit: false,
           },
-        };
+        });
       }
     }
 
     // Get API key from environment
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
-      return {
+      return finalize({
         success: false,
         error: {
           code: "CONFIG_ERROR",
@@ -505,7 +932,7 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
     }
 
     // Build request
@@ -564,7 +991,7 @@ export const providerRequest = internalAction({
       } else {
         // This should never happen - parameter validation above should catch this
         // If we get here, it's a bug in the validation logic
-        return {
+        return finalize({
           success: false,
           error: {
             code: "INTERNAL_ERROR",
@@ -579,7 +1006,7 @@ export const providerRequest = internalAction({
             endpointClass,
             cacheHit: false,
           },
-        };
+        });
       }
 
       const response = await fetch(url, {
@@ -600,15 +1027,14 @@ export const providerRequest = internalAction({
       });
 
       if (!response.ok) {
-        // Update circuit breaker on failure
-        if (response.status >= 500) {
-          await ctx.runMutation(internal.providerGateway.updateCircuitState, {
+        // Record circuit breaker failure for server errors
+        if (response.status >= 500 || response.status === 429) {
+          await ctx.runMutation(internal.providerGateway.recordCircuitFailure, {
             service: "google_places",
-            healthy: false,
           });
         }
 
-        return {
+        return finalize({
           success: false,
           error: {
             code: statusToErrorCode(response.status),
@@ -623,13 +1049,12 @@ export const providerRequest = internalAction({
             endpointClass,
             cacheHit: false,
           },
-        };
+        });
       }
 
-      // Update circuit breaker on success
-      await ctx.runMutation(internal.providerGateway.updateCircuitState, {
+      // Record circuit breaker success - this will close the circuit if in half-open
+      await ctx.runMutation(internal.providerGateway.recordCircuitSuccess, {
         service: "google_places",
-        healthy: true,
       });
 
       const data = await response.json();
@@ -637,7 +1062,7 @@ export const providerRequest = internalAction({
       // IMPORTANT: Never log the response data!
       // Only return it to the caller
 
-      return {
+      return finalize({
         success: true,
         data,
         metadata: {
@@ -648,13 +1073,18 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
     } catch (error) {
       clearTimeout(timeoutId);
 
       const isAbort = error instanceof Error && error.name === "AbortError";
 
-      return {
+      // Record circuit breaker failure for network errors and timeouts
+      await ctx.runMutation(internal.providerGateway.recordCircuitFailure, {
+        service: "google_places",
+      });
+
+      return finalize({
         success: false,
         error: {
           code: isAbort ? "TIMEOUT" : "NETWORK_ERROR",
@@ -669,7 +1099,7 @@ export const providerRequest = internalAction({
           endpointClass,
           cacheHit: false,
         },
-      };
+      });
     }
   },
 });
