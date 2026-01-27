@@ -296,7 +296,13 @@ export const updatePhotoModeration = internalMutation({
   },
   handler: async (ctx, args) => {
     const photo = await ctx.db.get(args.photoId);
-    if (!photo) return;
+    if (!photo) {
+      // Photo was deleted during processing - clean up any new storage file
+      if (args.newStorageId) {
+        await ctx.storage.delete(args.newStorageId);
+      }
+      return;
+    }
 
     // Store old storageId if we need to delete it after update
     const oldStorageId =
