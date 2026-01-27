@@ -9,13 +9,15 @@
  * 5. Response bodies are NEVER logged (policy compliance)
  * 6. Localization defaults are applied
  *
- * This file will have import errors until Convex is initialized with `bunx convex dev`
+ * Currently supported endpoint classes: place_details, text_search
+ * TODO: Implement nearby_search, autocomplete, photos, health
  */
 
 import {
   FIELD_SETS,
   type FieldSetKey,
   type EndpointClass,
+  ENDPOINT_CLASSES,
   DAILY_BUDGET_LIMITS,
   getFieldMask,
   getCostTier,
@@ -355,6 +357,48 @@ export const providerRequest = internalAction({
     const fieldSetKey = args.fieldSet as FieldSetKey;
     const endpointClass = args.endpointClass as EndpointClass;
 
+    // Validate endpoint class
+    const validEndpointClasses = Object.values(ENDPOINT_CLASSES);
+    if (!validEndpointClasses.includes(endpointClass)) {
+      return {
+        success: false,
+        error: {
+          code: "INVALID_ENDPOINT_CLASS",
+          message: `Endpoint class '${args.endpointClass}' is not valid. Valid classes: ${validEndpointClasses.join(", ")}`,
+          retryable: false,
+        },
+        metadata: {
+          requestId,
+          latencyMs: Date.now() - startTime,
+          costClass: "none",
+          fieldSet: fieldSetKey,
+          endpointClass,
+          cacheHit: false,
+        },
+      };
+    }
+
+    // Check if endpoint class is implemented
+    const implementedEndpoints: EndpointClass[] = ["place_details", "text_search"];
+    if (!implementedEndpoints.includes(endpointClass)) {
+      return {
+        success: false,
+        error: {
+          code: "ENDPOINT_NOT_IMPLEMENTED",
+          message: `Endpoint class '${endpointClass}' is not yet implemented. Currently supported: ${implementedEndpoints.join(", ")}`,
+          retryable: false,
+        },
+        metadata: {
+          requestId,
+          latencyMs: Date.now() - startTime,
+          costClass: "none",
+          fieldSet: fieldSetKey,
+          endpointClass,
+          cacheHit: false,
+        },
+      };
+    }
+
     // Check circuit breaker
     const circuitState = await ctx.runQuery(internal.providerGateway.getCircuitState, {
       service: "google_places",
@@ -480,7 +524,11 @@ export const providerRequest = internalAction({
           }),
         });
       } else {
-        throw new Error("Invalid request parameters");
+        // This shouldn't happen if endpoint class validation passed
+        throw new Error(
+          `Missing required parameters for ${endpointClass}: ` +
+          `place_details requires placeId, text_search requires query`
+        );
       }
 
       const response = await fetch(url, {
