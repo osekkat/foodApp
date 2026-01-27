@@ -227,8 +227,7 @@ describe("Cacheable Route Validation", () => {
       const isOwned =
         route.includes("/guides/") ||
         route.includes("/lists/") ||
-        route.includes("/api/cities") ||
-        route === "/";
+        route.includes("/api/cities");
 
       expect(isOwned).toBe(true);
     }
