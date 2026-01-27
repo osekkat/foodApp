@@ -7,10 +7,18 @@
  * - Itinerary: Ordered food crawls with time slots and notes
  *
  * POLICY: placeKey references only (never provider content)
+ *
+ * COLLABORATION: See listCollaboration.ts for invite/role management
  */
 
 import { query, mutation } from "./_generated/server";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
+import {
+  getAuthUser,
+  requireAuthUser,
+  requireListAccess,
+  checkListAccess,
+} from "./listCollaboration";
 
 // ============================================================================
 // Types
@@ -35,17 +43,6 @@ function generateSlug(name: string): string {
     .slice(0, 50);
 }
 
-/**
- * Get authenticated user ID (throws if not authenticated)
- */
-async function requireAuth(ctx: { auth: { getUserIdentity: () => Promise<unknown> } }) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error("Authentication required");
-  }
-  return identity;
-}
-
 // ============================================================================
 // List CRUD
 // ============================================================================
@@ -61,18 +58,7 @@ export const createList = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    // Get or create user
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
-
-    if (!user) {
-      throw new Error("User not found");
-    }
+    const user = await requireAuthUser(ctx);
 
     // Generate slug for public lists
     const slug =
@@ -101,20 +87,8 @@ export const getUserLists = query({
     type: v.optional(v.union(v.literal("favorites"), v.literal("custom"), v.literal("itinerary"))),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return [];
-    }
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
-
-    if (!user) {
-      return [];
-    }
+    const user = await getAuthUser(ctx);
+    if (!user) return [];
 
     let lists = await ctx.db
       .query("lists")
@@ -139,20 +113,14 @@ export const getList = query({
     const list = await ctx.db.get(args.listId);
     if (!list) return null;
 
-    // Check visibility
+    const user = await getAuthUser(ctx);
+
+    // Check access using collaboration system
     if (list.visibility === "private") {
-      const identity = await ctx.auth.getUserIdentity();
-      if (!identity) return null;
-      const tokenId = identity as { tokenIdentifier?: string };
+      if (!user) return null;
 
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-        .first();
-
-      if (!user || user._id !== list.userId) {
-        return null; // Not the owner
-      }
+      const { hasAccess } = await checkListAccess(ctx, args.listId, user._id, "view");
+      if (!hasAccess) return null;
     }
 
     return list;
@@ -190,26 +158,20 @@ export const updateList = mutation({
     coverPhotoReference: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
+    // Only owner can update list metadata
+    await requireListAccess(ctx, args.listId, "owner");
 
     const list = await ctx.db.get(args.listId);
     if (!list) {
-      throw new Error("List not found");
-    }
-
-    if (!user || list.userId !== user._id) {
-      throw new Error("Not authorized to update this list");
+      throw new ConvexError({ code: "NOT_FOUND", message: "List not found" });
     }
 
     // Cannot change favorites type
     if (list.type === "favorites" && args.visibility === "public") {
-      throw new Error("Favorites list cannot be made public");
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Favorites list cannot be made public",
+      });
     }
 
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
@@ -236,26 +198,20 @@ export const updateList = mutation({
 export const deleteList = mutation({
   args: { listId: v.id("lists") },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
+    // Only owner can delete a list
+    await requireListAccess(ctx, args.listId, "owner");
 
     const list = await ctx.db.get(args.listId);
     if (!list) {
-      throw new Error("List not found");
-    }
-
-    if (!user || list.userId !== user._id) {
-      throw new Error("Not authorized to delete this list");
+      throw new ConvexError({ code: "NOT_FOUND", message: "List not found" });
     }
 
     // Cannot delete favorites
     if (list.type === "favorites") {
-      throw new Error("Cannot delete favorites list");
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Cannot delete favorites list",
+      });
     }
 
     // Delete all items first
@@ -278,6 +234,16 @@ export const deleteList = mutation({
       await ctx.db.delete(collab._id);
     }
 
+    // Delete invites
+    const invites = await ctx.db
+      .query("listInvites")
+      .withIndex("by_list", (q) => q.eq("listId", args.listId))
+      .collect();
+
+    for (const invite of invites) {
+      await ctx.db.delete(invite._id);
+    }
+
     // Delete the list
     await ctx.db.delete(args.listId);
 
@@ -294,17 +260,7 @@ export const deleteList = mutation({
  */
 export const getOrCreateFavorites = mutation({
   handler: async (ctx) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
-
-    if (!user) {
-      throw new Error("User not found");
-    }
+    const user = await requireAuthUser(ctx);
 
     // Check if favorites already exists
     const existingFavorites = await ctx.db
@@ -346,22 +302,12 @@ export const addToList = mutation({
     itemNote: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
+    // Editors and owners can add items
+    await requireListAccess(ctx, args.listId, "edit");
 
     const list = await ctx.db.get(args.listId);
     if (!list) {
-      throw new Error("List not found");
-    }
-
-    // Check ownership (collaborator check would go here too)
-    if (!user || list.userId !== user._id) {
-      throw new Error("Not authorized to add to this list");
+      throw new ConvexError({ code: "NOT_FOUND", message: "List not found" });
     }
 
     // Check if already in list
@@ -371,7 +317,10 @@ export const addToList = mutation({
       .first();
 
     if (existing) {
-      throw new Error("Place already in list");
+      throw new ConvexError({
+        code: "ALREADY_EXISTS",
+        message: "Place already in list",
+      });
     }
 
     // Get next sort order
@@ -411,21 +360,12 @@ export const removeFromList = mutation({
     placeKey: v.string(),
   },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
+    // Editors and owners can remove items
+    await requireListAccess(ctx, args.listId, "edit");
 
     const list = await ctx.db.get(args.listId);
     if (!list) {
-      throw new Error("List not found");
-    }
-
-    if (!user || list.userId !== user._id) {
-      throw new Error("Not authorized to remove from this list");
+      throw new ConvexError({ code: "NOT_FOUND", message: "List not found" });
     }
 
     // Find and delete the item
@@ -435,7 +375,7 @@ export const removeFromList = mutation({
       .first();
 
     if (!item) {
-      throw new Error("Item not in list");
+      throw new ConvexError({ code: "NOT_FOUND", message: "Item not in list" });
     }
 
     await ctx.db.delete(item._id);
@@ -459,20 +399,14 @@ export const getListItems = query({
     const list = await ctx.db.get(args.listId);
     if (!list) return [];
 
-    // Check visibility
+    const user = await getAuthUser(ctx);
+
+    // Check access using collaboration system
     if (list.visibility === "private") {
-      const identity = await ctx.auth.getUserIdentity();
-      if (!identity) return [];
-      const tokenId = identity as { tokenIdentifier?: string };
+      if (!user) return [];
 
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-        .first();
-
-      if (!user || user._id !== list.userId) {
-        return [];
-      }
+      const { hasAccess } = await checkListAccess(ctx, args.listId, user._id, "view");
+      if (!hasAccess) return [];
     }
 
     const items = await ctx.db
@@ -498,20 +432,14 @@ export const isInList = query({
     const list = await ctx.db.get(args.listId);
     if (!list) return false;
 
-    // Check visibility - only owner can check private lists
+    const user = await getAuthUser(ctx);
+
+    // Check access using collaboration system
     if (list.visibility === "private") {
-      const identity = await ctx.auth.getUserIdentity();
-      if (!identity) return false;
-      const tokenId = identity as { tokenIdentifier?: string };
+      if (!user) return false;
 
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-        .first();
-
-      if (!user || user._id !== list.userId) {
-        return false;
-      }
+      const { hasAccess } = await checkListAccess(ctx, args.listId, user._id, "view");
+      if (!hasAccess) return false;
     }
 
     const item = await ctx.db
@@ -529,15 +457,7 @@ export const isInList = query({
 export const isInFavorites = query({
   args: { placeKey: v.string() },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return false;
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
-
+    const user = await getAuthUser(ctx);
     if (!user) return false;
 
     // Find favorites list
@@ -571,21 +491,12 @@ export const reorderListItems = mutation({
     itemIds: v.array(v.id("listItems")),
   },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
+    // Editors and owners can reorder items
+    await requireListAccess(ctx, args.listId, "edit");
 
     const list = await ctx.db.get(args.listId);
     if (!list) {
-      throw new Error("List not found");
-    }
-
-    if (!user || list.userId !== user._id) {
-      throw new Error("Not authorized to reorder this list");
+      throw new ConvexError({ code: "NOT_FOUND", message: "List not found" });
     }
 
     // Update sort orders
@@ -618,27 +529,13 @@ export const updateListItem = mutation({
     itemNote: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
-
     const item = await ctx.db.get(args.itemId);
     if (!item) {
-      throw new Error("Item not found");
+      throw new ConvexError({ code: "NOT_FOUND", message: "Item not found" });
     }
 
-    const list = await ctx.db.get(item.listId);
-    if (!list) {
-      throw new Error("List not found");
-    }
-
-    if (!user || list.userId !== user._id) {
-      throw new Error("Not authorized to update this item");
-    }
+    // Editors and owners can update items
+    await requireListAccess(ctx, item.listId, "edit");
 
     const updates: Record<string, unknown> = {};
     if (args.timeSlot !== undefined) {
@@ -667,17 +564,7 @@ export const updateListItem = mutation({
 export const toggleFavorite = mutation({
   args: { placeKey: v.string() },
   handler: async (ctx, args) => {
-    const identity = await requireAuth(ctx);
-    const tokenId = identity as { tokenIdentifier?: string };
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
-      .first();
-
-    if (!user) {
-      throw new Error("User not found");
-    }
+    const user = await requireAuthUser(ctx);
 
     // Get or create favorites list
     let favoritesList = await ctx.db
@@ -699,7 +586,10 @@ export const toggleFavorite = mutation({
     }
 
     if (!favoritesList) {
-      throw new Error("Failed to create favorites list");
+      throw new ConvexError({
+        code: "INTERNAL_ERROR",
+        message: "Failed to create favorites list",
+      });
     }
 
     // Check if already in favorites
