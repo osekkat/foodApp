@@ -479,6 +479,109 @@ export const setServiceMode = mutation({
 });
 
 /**
+ * Internal setMode for automated systems (alerts, crons)
+ * Bypasses auth checks since it's called by internal functions
+ */
+export const setMode = internalMutation({
+  args: {
+    mode: v.number(),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    // Validate mode is an integer 0-3
+    if (!Number.isInteger(args.mode) || args.mode < 0 || args.mode > 3) {
+      throw new Error(`Invalid mode: ${args.mode}. Must be an integer 0-3.`);
+    }
+    const mode = args.mode as ServiceModeLevel;
+    const reason = args.reason ?? `auto_mitigation_mode_${mode}`;
+
+    const now = Date.now();
+
+    // Get current state
+    const currentState = await ctx.db
+      .query("systemState")
+      .withIndex("by_key", (q) => q.eq("key", "service_mode"))
+      .first();
+
+    const currentMode = (currentState?.currentMode ?? 0) as ServiceModeLevel;
+
+    // Record transition if mode changed
+    if (currentMode !== mode) {
+      const triggers = {
+        providerHealthy: mode < 2,
+        budgetOk: mode < 1,
+        latencyOk: mode < 1,
+        circuitBreakerClosed: mode < 2,
+      };
+
+      await ctx.db.insert("serviceModeHistory", {
+        fromMode: currentMode,
+        toMode: mode,
+        reason,
+        triggers,
+        transitionedAt: now,
+      });
+
+      // Update feature flags
+      const newFeatures = MODE_FEATURES[mode];
+      for (const [key, enabled] of Object.entries(newFeatures)) {
+        const existingFlag = await ctx.db
+          .query("featureFlags")
+          .withIndex("by_key", (q) => q.eq("key", key))
+          .first();
+
+        if (existingFlag) {
+          await ctx.db.patch(existingFlag._id, {
+            enabled,
+            reason: `auto_mode_${mode}_${reason}`,
+            updatedAt: now,
+          });
+        } else {
+          await ctx.db.insert("featureFlags", {
+            key,
+            enabled,
+            reason: `auto_mode_${mode}_${reason}`,
+            updatedAt: now,
+          });
+        }
+      }
+    }
+
+    // Update or create state
+    if (currentState) {
+      await ctx.db.patch(currentState._id, {
+        currentMode: mode,
+        reason,
+        enteredAt: currentMode !== mode ? now : currentState.enteredAt,
+        triggers: {
+          providerHealthy: mode < 2,
+          budgetOk: mode < 1,
+          latencyOk: mode < 1,
+          circuitBreakerClosed: mode < 2,
+        },
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("systemState", {
+        key: "service_mode",
+        currentMode: mode,
+        reason,
+        enteredAt: now,
+        triggers: {
+          providerHealthy: mode < 2,
+          budgetOk: mode < 1,
+          latencyOk: mode < 1,
+          circuitBreakerClosed: mode < 2,
+        },
+        updatedAt: now,
+      });
+    }
+
+    return { success: true, mode, reason };
+  },
+});
+
+/**
  * Initialize service mode to Mode 0 (Normal)
  * Call once on app initialization
  */

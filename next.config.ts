@@ -1,5 +1,124 @@
 import type { NextConfig } from "next";
 
+// ============================================================================
+// Content Security Policy (CSP) Configuration
+// ============================================================================
+// CSP directives compatible with Google Maps JavaScript API
+// See: https://developers.google.com/maps/documentation/javascript/content-security-policy
+
+const ContentSecurityPolicy = {
+  "default-src": ["'self'"],
+  "script-src": [
+    "'self'",
+    "'unsafe-inline'", // Required for Google Maps JS initialization
+    "'unsafe-eval'", // Required for Google Maps JS (uses eval for some features)
+    "https://maps.googleapis.com",
+    "https://maps.gstatic.com",
+  ],
+  "style-src": [
+    "'self'",
+    "'unsafe-inline'", // Required for Google Maps JS (inline styles)
+    "https://fonts.googleapis.com",
+  ],
+  "img-src": [
+    "'self'",
+    "data:",
+    "blob:",
+    "https://maps.googleapis.com",
+    "https://maps.gstatic.com",
+    "https://*.ggpht.com", // Google user content (Street View, etc.)
+    "https://*.convex.cloud", // Convex storage for user uploads
+  ],
+  "font-src": ["'self'", "https://fonts.gstatic.com"],
+  "connect-src": [
+    "'self'",
+    "https://maps.googleapis.com",
+    "https://places.googleapis.com",
+    "https://*.convex.cloud", // Convex backend
+    "wss://*.convex.cloud", // Convex WebSocket connections
+    // Allow Sentry for error tracking (if configured)
+    "https://*.sentry.io",
+    "https://*.ingest.sentry.io",
+  ],
+  "worker-src": ["'self'", "blob:"], // For service workers
+  "frame-src": ["https://maps.googleapis.com"], // Google Maps embeds if needed
+  "frame-ancestors": ["'none'"], // Prevent clickjacking
+  "base-uri": ["'self'"],
+  "form-action": ["'self'"],
+  "object-src": ["'none'"], // Disallow plugins (Flash, etc.)
+  "upgrade-insecure-requests": [], // Force HTTPS
+};
+
+/**
+ * Build CSP string from directives object
+ */
+function buildCSP(directives: Record<string, string[]>): string {
+  return Object.entries(directives)
+    .map(([key, values]) => {
+      if (values.length === 0) {
+        return key; // Directives like upgrade-insecure-requests have no values
+      }
+      return `${key} ${values.join(" ")}`;
+    })
+    .join("; ");
+}
+
+// ============================================================================
+// Security Headers
+// ============================================================================
+
+const securityHeaders = [
+  // DNS prefetch for performance
+  {
+    key: "X-DNS-Prefetch-Control",
+    value: "on",
+  },
+  // Prevent MIME type sniffing
+  {
+    key: "X-Content-Type-Options",
+    value: "nosniff",
+  },
+  // Prevent clickjacking
+  {
+    key: "X-Frame-Options",
+    value: "DENY",
+  },
+  // XSS protection (legacy browsers)
+  {
+    key: "X-XSS-Protection",
+    value: "1; mode=block",
+  },
+  // Referrer policy
+  {
+    key: "Referrer-Policy",
+    value: "strict-origin-when-cross-origin",
+  },
+  // Permissions policy (disable unused APIs)
+  {
+    key: "Permissions-Policy",
+    value: [
+      "camera=()",
+      "microphone=()",
+      "geolocation=(self)", // Allow geolocation for location-based features
+      "interest-cohort=()", // Opt out of FLoC
+      "payment=()", // No Web Payment API
+      "usb=()",
+      "magnetometer=()",
+      "gyroscope=()",
+      "accelerometer=()",
+    ].join(", "),
+  },
+  // Content Security Policy
+  {
+    key: "Content-Security-Policy",
+    value: buildCSP(ContentSecurityPolicy),
+  },
+];
+
+// ============================================================================
+// Next.js Configuration
+// ============================================================================
+
 const nextConfig: NextConfig = {
   // Image domains for external images (Google Places photos will go through proxy)
   images: {
@@ -28,30 +147,32 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Apply to all routes
+        // Apply security headers to all routes
         source: "/:path*",
-        headers: [
-          {
-            key: "X-DNS-Prefetch-Control",
-            value: "on",
-          },
-          {
-            key: "X-Content-Type-Options",
-            value: "nosniff",
-          },
-          {
-            key: "Referrer-Policy",
-            value: "origin-when-cross-origin",
-          },
-        ],
+        headers: securityHeaders,
       },
       {
-        // Provider-backed pages must not be cached
+        // Provider-backed pages must not be cached (compliance requirement)
+        // These pages render ephemeral Google Places content
         source: "/place/:path*",
         headers: [
           {
             key: "Cache-Control",
             value: "no-store, must-revalidate",
+          },
+          {
+            key: "X-Robots-Tag",
+            value: "noindex", // Don't index provider-backed pages
+          },
+        ],
+      },
+      {
+        // Photo proxy - short cache TTL (handled by the route itself)
+        source: "/api/photos/:path*",
+        headers: [
+          {
+            key: "X-Robots-Tag",
+            value: "noindex",
           },
         ],
       },

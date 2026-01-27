@@ -26,7 +26,6 @@ import {
 
 // Convex imports (now that Convex is initialized)
 import { query, internalAction, internalMutation, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 /**
@@ -765,6 +764,10 @@ export const providerRequest = internalAction({
     priority: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<ProviderResult<unknown>> => {
+    // Work around TypeScript depth limitations with complex Convex types
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+    const internal: any = require("./_generated/api").internal;
+
     const requestId = generateRequestId();
     const startTime = Date.now();
     const finalize = (result: ProviderResult<unknown>) => {

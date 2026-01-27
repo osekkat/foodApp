@@ -10,9 +10,12 @@
  */
 
 import { cronJobs } from "convex/server";
-import { internal } from "./_generated/api";
 
 const crons = cronJobs();
+
+// Work around TypeScript depth limitations with complex Convex types
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+const internalRef: any = require("./_generated/api").internal;
 
 /**
  * Service Mode Evaluation
@@ -32,8 +35,7 @@ const crons = cronJobs();
 crons.interval(
   "evaluate_service_mode",
   { minutes: 1 },
-  // @ts-expect-error - TypeScript depth limit with complex Convex types
-  internal.serviceMode.evaluateServiceMode
+  internalRef.serviceMode.evaluateServiceMode
 );
 
 /**
@@ -45,7 +47,7 @@ crons.interval(
 crons.daily(
   "cleanup_old_metrics",
   { hourUTC: 2, minuteUTC: 0 },
-  internal.metrics.cleanupOldMetrics,
+  internalRef.metrics.cleanupOldMetrics,
   {} // No args - uses default 7-day retention
 );
 
@@ -58,7 +60,25 @@ crons.daily(
 crons.daily(
   "cleanup_expired_rate_limits",
   { hourUTC: 3, minuteUTC: 0 },
-  internal.rateLimit.cleanupExpiredRateLimits
+  internalRef.rateLimit.cleanupExpiredRateLimits
+);
+
+/**
+ * Alert Checking
+ *
+ * Runs every minute to check alert thresholds and trigger notifications.
+ * Monitors:
+ * - Google API error rate (>5% for 5min)
+ * - Search P95 latency (>2s for 10min)
+ * - Cache hit rate (<50% for 1hr)
+ * - Review spam rate (>10/hour)
+ *
+ * Auto-mitigation triggers service mode changes when configured.
+ */
+crons.interval(
+  "check_alerts",
+  { minutes: 1 },
+  internalRef.alerts.checkAlerts
 );
 
 /**

@@ -514,4 +514,49 @@ export default defineSchema({
   })
     .index("by_name_period", ["name", "period", "periodStart"])
     .index("by_period_start", ["period", "periodStart"]),
+
+  // ===========================================
+  // Alerting System
+  // ===========================================
+
+  // Alert definitions (configurable thresholds)
+  alertThresholds: defineTable({
+    name: v.string(), // e.g. "google_api_error_rate", "search_p95_latency"
+    metric: v.string(), // Metric name to check
+    threshold: v.number(), // Value to trigger alert
+    operator: v.string(), // "gt" | "lt" | "gte" | "lte"
+    windowMinutes: v.number(), // Time window to evaluate
+    severity: v.string(), // "critical" | "warning" | "info"
+    enabled: v.boolean(),
+    autoMitigate: v.optional(v.boolean()), // If true, trigger auto-mitigation
+    mitigationAction: v.optional(v.string()), // e.g. "set_service_mode_2", "disable_photos"
+    updatedAt: v.number(),
+  }).index("by_name", ["name"]),
+
+  // Alert history (triggered alerts)
+  alerts: defineTable({
+    thresholdName: v.string(), // Reference to alertThresholds.name
+    severity: v.string(), // "critical" | "warning" | "info"
+    title: v.string(),
+    message: v.string(),
+    metricValue: v.number(), // Actual value that triggered
+    threshold: v.number(), // Threshold that was breached
+    autoMitigated: v.boolean(), // Whether auto-mitigation was triggered
+    mitigationAction: v.optional(v.string()), // Action taken
+    resolvedAt: v.optional(v.number()), // When the condition returned to normal
+    createdAt: v.number(),
+  })
+    .index("by_severity_recent", ["severity", "createdAt"])
+    .index("by_threshold", ["thresholdName", "createdAt"])
+    .index("by_unresolved", ["resolvedAt"]),
+
+  // Alert subscriptions (notification channels)
+  alertSubscriptions: defineTable({
+    thresholdName: v.optional(v.string()), // null = all alerts
+    severity: v.optional(v.string()), // Filter by severity
+    channel: v.string(), // "webhook" | "admin_ui" | "email"
+    config: v.string(), // JSON config (e.g. webhook URL)
+    enabled: v.boolean(),
+    createdAt: v.number(),
+  }).index("by_threshold", ["thresholdName"]),
 });

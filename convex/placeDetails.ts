@@ -11,7 +11,6 @@
  */
 
 import { query, action, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 // ============================================================================
@@ -315,7 +314,10 @@ export const fetchProviderDetails = action({
       ? "PLACE_DETAILS_WITH_PHOTOS"
       : "PLACE_DETAILS_STANDARD";
 
-    const result = await ctx.runAction(internal.providerGateway.providerRequest, {
+    // Work around TypeScript depth limitations with complex Convex types
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+    const internalRef: any = require("./_generated/api").internal;
+    const result = await ctx.runAction(internalRef.providerGateway.providerRequest, {
       fieldSet,
       endpointClass: "place_details",
       placeId: args.googlePlaceId,
