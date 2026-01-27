@@ -51,6 +51,10 @@ function validateSlug(slug: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
 }
 
+function resolveTokenIdentifier(identity: { tokenIdentifier?: string } | null) {
+  return identity?.tokenIdentifier ?? null;
+}
+
 /**
  * Get authenticated user and check admin/editor role
  * Uses the userRoles table for RBAC
@@ -61,11 +65,14 @@ async function requireEditor(ctx: any) {
   if (!identity) {
     throw new Error("Authentication required");
   }
-  const tokenId = identity as { tokenIdentifier?: string };
+  const tokenIdentifier = resolveTokenIdentifier(identity as { tokenIdentifier?: string } | null);
+  if (!tokenIdentifier) {
+    throw new Error("Authentication required");
+  }
 
   const user = await ctx.db
     .query("users")
-    .withIndex("by_token", (q: any) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+    .withIndex("by_token", (q: any) => q.eq("tokenIdentifier", tokenIdentifier))
     .first();
 
   if (!user) {
@@ -407,11 +414,14 @@ export const remove = mutation({
     if (!identity) {
       throw new Error("Authentication required");
     }
-    const tokenId = identity as { tokenIdentifier?: string };
+    const tokenIdentifier = resolveTokenIdentifier(identity as { tokenIdentifier?: string } | null);
+    if (!tokenIdentifier) {
+      throw new Error("Authentication required");
+    }
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
       .first();
 
     if (!user) {
@@ -462,11 +472,14 @@ export const adminList = query({
     if (!identity) {
       return [];
     }
-    const tokenId = identity as { tokenIdentifier?: string };
+    const tokenIdentifier = resolveTokenIdentifier(identity as { tokenIdentifier?: string } | null);
+    if (!tokenIdentifier) {
+      return [];
+    }
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
       .first();
 
     if (!user) {
@@ -511,11 +524,14 @@ export const getStats = query({
     if (!identity) {
       return null;
     }
-    const tokenId = identity as { tokenIdentifier?: string };
+    const tokenIdentifier = resolveTokenIdentifier(identity as { tokenIdentifier?: string } | null);
+    if (!tokenIdentifier) {
+      return null;
+    }
 
     const user = await ctx.db
       .query("users")
-      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenId.tokenIdentifier ?? ""))
+      .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
       .first();
 
     if (!user) {

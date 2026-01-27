@@ -12,7 +12,7 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  const client = useMemo(() => new ConvexReactClient(convexUrl), []);
+  const client = useMemo(() => new ConvexReactClient(convexUrl), [convexUrl]);
 
   return <ConvexAuthProvider client={client}>{children}</ConvexAuthProvider>;
 }
