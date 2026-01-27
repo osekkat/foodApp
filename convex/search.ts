@@ -14,17 +14,15 @@
  * POLICY: Only owned content is indexed. Provider content is never stored.
  */
 
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
 
 // ============================================================================
 // Transliteration Integration
 // ============================================================================
 
-// Note: We import transliteration functions from lib/transliteration.ts
-// Since Convex runs in a Node.js-like environment, we can use relative imports
-// However, for server-side code, we need to inline or bundle the functions
+// Convex functions run in an isolated environment and cannot import from lib/
+// so we duplicate the transliteration logic here. Keep in sync with lib/transliteration.ts
 
 /**
  * Moroccan food transliterations (subset for Convex runtime)
@@ -42,7 +40,7 @@ const MOROCCAN_FOOD_TRANSLITERATIONS: Record<string, string[]> = {
   kefta: ["كفتة", "الكفتة", "kofta", "kofte", "kafta"],
   brochettes: ["بروشات", "شواء", "brochette", "skewers"],
   msemen: ["مسمن", "المسمن", "msemmen", "rghaif"],
-  baghrir: ["بغرير", "البغرير", "beghrir"],
+  baghrir: ["بغرير", "البغرير", "beghrir", "thousand holes"],
   harcha: ["حرشة", "الحرشة"],
   khobz: ["خبز", "الخبز", "bread", "pain"],
   chebakia: ["شباكية", "الشباكية", "chebakiya"],
@@ -50,7 +48,7 @@ const MOROCCAN_FOOD_TRANSLITERATIONS: Record<string, string[]> = {
   zaalouk: ["زعلوك", "الزعلوك"],
   taktouka: ["تكتوكة", "التكتوكة"],
   bissara: ["بصارة", "البصارة", "bessara"],
-  atay: ["أتاي", "الشاي", "mint tea", "the menthe", "moroccan tea"],
+  atay: ["أتاي", "الشاي", "mint tea", "the menthe", "the a la menthe", "moroccan tea"],
   smen: ["سمن", "السمن", "preserved butter"],
   chermoula: ["شرمولة", "الشرمولة", "charmoula"],
   marrakech: ["مراكش", "المراكشي", "marrakeshi"],
@@ -81,6 +79,20 @@ function normalizeArabic(text: string): string {
 }
 
 /**
+ * Check if a term appears as a whole word in text
+ * Uses word boundaries for Latin text, substring match for Arabic
+ */
+function containsWholeWord(text: string, term: string): boolean {
+  // For Arabic text, use substring matching (Arabic has attached articles)
+  if (/[\u0600-\u06FF]/.test(term)) {
+    return text.includes(term);
+  }
+  // For Latin text, use word boundary matching
+  const regex = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  return regex.test(text);
+}
+
+/**
  * Expand text with transliteration variants for indexing
  */
 function expandForSearch(text: string): string {
@@ -91,15 +103,15 @@ function expandForSearch(text: string): string {
   const expansions: string[] = [];
 
   for (const [canonical, variants] of Object.entries(MOROCCAN_FOOD_TRANSLITERATIONS)) {
-    if (normalizedText.includes(canonical)) {
+    if (containsWholeWord(normalizedText, canonical)) {
       expansions.push(...variants);
     }
 
     for (const variant of variants) {
       const normalizedVariant = normalizeArabic(variant.toLowerCase());
       if (
-        normalizedText.includes(variant.toLowerCase()) ||
-        normalizedArabicText.includes(normalizedVariant)
+        containsWholeWord(normalizedText, variant.toLowerCase()) ||
+        containsWholeWord(normalizedArabicText, normalizedVariant)
       ) {
         if (!expansions.includes(canonical)) {
           expansions.push(canonical);

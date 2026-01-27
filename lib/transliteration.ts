@@ -58,8 +58,8 @@ export const MOROCCAN_FOOD_TRANSLITERATIONS: Record<string, string[]> = {
   atay: ["أتاي", "الشاي", "mint tea", "the menthe", "the a la menthe", "moroccan tea"],
   jus: ["عصير", "juice", "jus d'orange"],
 
-  // Sweets
-  gazelle: ["غزال", "كعب الغزال", "gazelle horns"],
+  // Sweets (note: "kaab" above covers "kaab ghazal" / "gazelle horns" / "كعب الغزال")
+  gazelle: ["غزال"],  // Just the animal, kaab entry handles the pastry
   ghriba: ["غريبة", "الغريبة", "ghoriba"],
   fekkas: ["فقاص", "الفقاص", "feqqas"],
 
@@ -156,6 +156,30 @@ export function normalizeArabic(text: string): string {
 // ============================================================================
 
 /**
+ * Check if a term appears as a whole word in text
+ * Uses word boundaries for Latin text, substring match for Arabic
+ * (Arabic words can have attached prefixes/suffixes)
+ */
+function containsWholeWord(text: string, term: string): boolean {
+  // For Arabic text (contains Arabic Unicode range), use substring matching
+  // because Arabic has attached articles/prepositions
+  if (/[\u0600-\u06FF]/.test(term)) {
+    return text.includes(term);
+  }
+  // For Latin text, use word boundary matching to avoid false positives
+  // like "cafe" in "decaffeinated" or "ras" in "grass"
+  const regex = new RegExp(`\\b${escapeRegex(term)}\\b`, "i");
+  return regex.test(text);
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Expand text for search indexing
  *
  * When content is created/updated, this function generates searchable text
@@ -178,8 +202,8 @@ export function expandForSearch(text: string): string {
 
   // Check each canonical term
   for (const [canonical, variants] of Object.entries(MOROCCAN_FOOD_TRANSLITERATIONS)) {
-    // Check if canonical term is in text
-    if (normalizedText.includes(canonical)) {
+    // Check if canonical term is in text (whole word match for Latin)
+    if (containsWholeWord(normalizedText, canonical)) {
       // Add all variants
       expansions.push(...variants);
     }
@@ -188,8 +212,8 @@ export function expandForSearch(text: string): string {
     for (const variant of variants) {
       const normalizedVariant = normalizeArabic(variant.toLowerCase());
       if (
-        normalizedText.includes(variant.toLowerCase()) ||
-        normalizedArabicText.includes(normalizedVariant)
+        containsWholeWord(normalizedText, variant.toLowerCase()) ||
+        containsWholeWord(normalizedArabicText, normalizedVariant)
       ) {
         // Add canonical and all other variants
         if (!expansions.includes(canonical)) {

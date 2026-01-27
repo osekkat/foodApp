@@ -158,6 +158,35 @@ describe("Transliteration", () => {
       expect(expandForSearch("")).toBe("");
       expect(expandForSearch(null as unknown as string)).toBe("");
     });
+
+    it("should NOT expand terms that appear as substrings in other words", () => {
+      // "cafe" should not match in "decaffeinated" (when coffee is not present)
+      const text1 = "decaffeinated beverage is available";
+      const expanded1 = expandForSearch(text1);
+      expect(expanded1).not.toContain("مقهى"); // Arabic cafe
+      expect(expanded1).not.toContain("kahwa");
+      expect(expanded1).toBe(text1); // No expansions
+
+      // "ras" should not match in "grass" or "erase"
+      const text2 = "grass grows in the garden";
+      const expanded2 = expandForSearch(text2);
+      expect(expanded2).not.toContain("ras el hanout");
+      expect(expanded2).not.toContain("راس الحانوت");
+      expect(expanded2).toBe(text2); // No expansions
+
+      // "fes" should not match in "festival"
+      const text3 = "the festival was amazing";
+      const expanded3 = expandForSearch(text3);
+      expect(expanded3).not.toContain("فاس"); // Arabic Fes
+      expect(expanded3).not.toContain("fassi");
+      expect(expanded3).toBe(text3); // No expansions
+
+      // But "cafe" as a standalone word should still expand
+      const text4 = "visit the cafe downtown";
+      const expanded4 = expandForSearch(text4);
+      expect(expanded4).toContain("مقهى");
+      expect(expanded4).toContain("kahwa");
+    });
   });
 
   describe("normalizeQuery (query-time)", () => {
