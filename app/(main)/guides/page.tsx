@@ -1,19 +1,23 @@
-export const metadata = {
-  title: "Guides",
-  description: "Curated food guides for Morocco",
+import { Metadata } from "next";
+import { fetchQuery } from "convex/nextjs";
+import { api } from "@/convex/_generated/api";
+import { GuidesListPage } from "./GuidesListPage";
+
+export const metadata: Metadata = {
+  title: "Curated Food Guides | Morocco Eats",
+  description:
+    "Discover the best food experiences in Morocco with our curated guides. From tagine spots in Marrakech to seafood in Casablanca.",
+  openGraph: {
+    title: "Curated Food Guides | Morocco Eats",
+    description:
+      "Discover the best food experiences in Morocco with our curated guides.",
+    type: "website",
+  },
 };
 
-export default function GuidesPage() {
-  return (
-    <div className="min-h-screen bg-white dark:bg-black">
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
-          Curated Guides
-        </h1>
-        <p className="mt-4 text-zinc-600 dark:text-zinc-400">
-          Guides coming soon...
-        </p>
-      </div>
-    </div>
-  );
+export default async function GuidesPage() {
+  // Pre-fetch guides for SSR
+  const guides = await fetchQuery(api.guides.list, { locale: "en", limit: 50 });
+
+  return <GuidesListPage initialGuides={guides} />;
 }

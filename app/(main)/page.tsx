@@ -5,6 +5,7 @@ import {
   DishQuickPicks,
   NearMeCard,
   FeaturedPlaces,
+  FeaturedGuides,
 } from "@/components/home";
 
 export default function HomePage() {
@@ -45,6 +46,7 @@ export default function HomePage() {
         <CityPicker />
         <DishQuickPicks />
         <NearMeCard />
+        <FeaturedGuides city="marrakech" locale="en" />
         <FeaturedPlaces city="marrakech" />
       </main>
 

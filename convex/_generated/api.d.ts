@@ -16,12 +16,15 @@ import type * as crons from "../crons.js";
 import type * as curatedPlaces from "../curatedPlaces.js";
 import type * as featureFlags from "../featureFlags.js";
 import type * as fieldSets from "../fieldSets.js";
+import type * as guides from "../guides.js";
 import type * as http from "../http.js";
 import type * as listCollaboration from "../listCollaboration.js";
 import type * as lists from "../lists.js";
+import type * as mapTileCache from "../mapTileCache.js";
 import type * as metrics from "../metrics.js";
 import type * as placeDetails from "../placeDetails.js";
 import type * as places from "../places.js";
+import type * as popularSearches from "../popularSearches.js";
 import type * as profile from "../profile.js";
 import type * as providerGateway from "../providerGateway.js";
 import type * as rateLimit from "../rateLimit.js";
@@ -31,6 +34,8 @@ import type * as searchCache from "../searchCache.js";
 import type * as serviceMode from "../serviceMode.js";
 import type * as systemHealth from "../systemHealth.js";
 import type * as tags from "../tags.js";
+import type * as ugcPhotos from "../ugcPhotos.js";
+import type * as ugcPhotosNodeActions from "../ugcPhotosNodeActions.js";
 
 import type {
   ApiFromModules,
@@ -47,12 +52,15 @@ declare const fullApi: ApiFromModules<{
   curatedPlaces: typeof curatedPlaces;
   featureFlags: typeof featureFlags;
   fieldSets: typeof fieldSets;
+  guides: typeof guides;
   http: typeof http;
   listCollaboration: typeof listCollaboration;
   lists: typeof lists;
+  mapTileCache: typeof mapTileCache;
   metrics: typeof metrics;
   placeDetails: typeof placeDetails;
   places: typeof places;
+  popularSearches: typeof popularSearches;
   profile: typeof profile;
   providerGateway: typeof providerGateway;
   rateLimit: typeof rateLimit;
@@ -62,6 +70,8 @@ declare const fullApi: ApiFromModules<{
   serviceMode: typeof serviceMode;
   systemHealth: typeof systemHealth;
   tags: typeof tags;
+  ugcPhotos: typeof ugcPhotos;
+  ugcPhotosNodeActions: typeof ugcPhotosNodeActions;
 }>;
 
 /**
