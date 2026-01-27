@@ -160,9 +160,15 @@ export default defineSchema({
     publishedAt: v.optional(v.number()),
     featured: v.boolean(),
     sortOrder: v.number(),
+    // Searchable text with transliteration variants for full-text search
+    searchableText: v.optional(v.string()),
   })
     .index("by_slug", ["slug"])
-    .index("by_city_featured", ["city", "featured", "sortOrder"]),
+    .index("by_city_featured", ["city", "featured", "sortOrder"])
+    .searchIndex("search_curated", {
+      searchField: "searchableText",
+      filterFields: ["city", "locale"],
+    }),
 
   // Community taste tags for places
   placeTags: defineTable({
@@ -180,9 +186,14 @@ export default defineSchema({
     mentionsCount: v.number(),
     lastMentionedAt: v.number(),
     updatedAt: v.number(),
+    // Searchable text with transliteration variants for full-text search
+    searchableText: v.optional(v.string()),
   })
     .index("by_place", ["placeKey"])
-    .index("by_dish", ["dish"]),
+    .index("by_dish", ["dish"])
+    .searchIndex("search_dishes", {
+      searchField: "searchableText",
+    }),
 
   // User personal notes for saved places
   userPlaceNotes: defineTable({
@@ -211,11 +222,17 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.optional(v.number()),
     deletedAt: v.optional(v.number()),
+    // Searchable text with transliteration for full-text search
+    searchableText: v.optional(v.string()),
   })
     .index("by_place", ["placeKey"])
     .index("by_user", ["userId"])
     .index("by_user_place", ["userId", "placeKey"])
-    .index("by_place_recent", ["placeKey", "createdAt"]),
+    .index("by_place_recent", ["placeKey", "createdAt"])
+    .searchIndex("search_reviews", {
+      searchField: "searchableText",
+      filterFields: ["placeKey"],
+    }),
 
   // Review edit history for moderation/audit
   reviewEdits: defineTable({
@@ -334,10 +351,16 @@ export default defineSchema({
     featured: v.boolean(),
     sortOrder: v.number(),
     locale: v.string(), // "ar" | "fr" | "en"
+    // Searchable text with transliteration for full-text search
+    searchableText: v.optional(v.string()),
   })
     .index("by_slug", ["slug"])
     .index("by_city", ["city"])
-    .index("by_featured", ["featured", "sortOrder"]),
+    .index("by_featured", ["featured", "sortOrder"])
+    .searchIndex("search_guides", {
+      searchField: "searchableText",
+      filterFields: ["city", "locale"],
+    }),
 
   // ===========================================
   // Cities & Geography
