@@ -386,10 +386,11 @@ export const setServiceMode = mutation({
     reason: v.string(),
   },
   handler: async (ctx, args) => {
-    const mode = args.mode as ServiceModeLevel;
-    if (mode < 0 || mode > 3) {
-      throw new Error(`Invalid mode: ${mode}. Must be 0-3.`);
+    // Validate mode is an integer 0-3
+    if (!Number.isInteger(args.mode) || args.mode < 0 || args.mode > 3) {
+      throw new Error(`Invalid mode: ${args.mode}. Must be an integer 0-3.`);
     }
+    const mode = args.mode as ServiceModeLevel;
 
     const now = Date.now();
 
