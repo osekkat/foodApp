@@ -22,11 +22,10 @@ import {
   getMaxCost,
 } from "./fieldSets";
 
-// These imports require Convex to be initialized
-// Uncomment after running `bunx convex dev`:
-// import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
-// import { internal } from "./_generated/api";
-// import { v } from "convex/values";
+// Convex imports (now that Convex is initialized)
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { v } from "convex/values";
 
 /**
  * Supported languages for localization
@@ -205,11 +204,9 @@ export function statusToErrorCode(status: number): string {
 }
 
 // ============================================================================
-// The following functions require Convex to be initialized
-// They are commented out until `bunx convex dev` creates the _generated files
+// Convex Functions (now active)
 // ============================================================================
 
-/*
 // Internal query to check circuit breaker state
 export const getCircuitState = internalQuery({
   args: { service: v.string() },
@@ -577,18 +574,14 @@ export const providerRequest = internalAction({
     }
   },
 });
-*/
 
 /**
- * USAGE NOTE:
+ * USAGE:
  *
- * After running `bunx convex dev` to initialize Convex:
- * 1. Uncomment the Convex imports at the top
- * 2. Uncomment the internal queries/mutations/actions above
- * 3. Add GOOGLE_PLACES_API_KEY to Convex environment variables
- *
- * All provider API calls should then use:
+ * All provider API calls should use:
  *   await ctx.runAction(internal.providerGateway.providerRequest, { ... })
  *
  * Never call the Google Places API directly!
+ *
+ * Don't forget to add GOOGLE_PLACES_API_KEY to Convex environment variables.
  */
