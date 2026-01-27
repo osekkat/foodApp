@@ -24,7 +24,7 @@ export default function HomePage() {
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-              Morocco Food Discovery
+              Morocco Eats
             </h1>
             <nav className="flex items-center gap-4">
               <Link
@@ -39,9 +39,12 @@ export default function HomePage() {
               >
                 Map
               </Link>
-              <button className="rounded-full bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700">
+              <Link
+                href="/signin"
+                className="rounded-full bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700"
+              >
                 Sign In
-              </button>
+              </Link>
             </nav>
           </div>
         </div>
@@ -183,7 +186,7 @@ export default function HomePage() {
 
       <footer className="border-t border-zinc-200 py-8 dark:border-zinc-800">
         <div className="mx-auto max-w-7xl px-4 text-center text-sm text-zinc-500 dark:text-zinc-400 sm:px-6 lg:px-8">
-          <p>&copy; 2026 Morocco Food Discovery. All rights reserved.</p>
+          <p>&copy; 2026 Morocco Eats. All rights reserved.</p>
         </div>
       </footer>
     </div>

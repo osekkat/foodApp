@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Sign In",
-  description: "Sign in to Morocco Food Discovery",
+  description: "Sign in to Morocco Eats",
 };
 
 export default function SignInPage() {
