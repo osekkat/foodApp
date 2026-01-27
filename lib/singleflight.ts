@@ -89,14 +89,10 @@ export async function singleflight<T>(
   logSingleflightEvent("miss", key);
 
   // Create the promise for this operation
-  const promise = operation()
-    .then((result) => {
-      return result;
-    })
-    .finally(() => {
-      // Always clean up, whether success or failure
-      inFlight.delete(key);
-    });
+  // Use .finally() to ensure cleanup on both success and failure
+  const promise = operation().finally(() => {
+    inFlight.delete(key);
+  });
 
   // Register the in-flight promise
   inFlight.set(key, promise);
