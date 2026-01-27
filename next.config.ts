@@ -81,11 +81,6 @@ if (convexWsOrigin) {
   ContentSecurityPolicy["connect-src"].push(convexWsOrigin);
 }
 
-// Dev-only: allow websocket connections (HMR, tunnels)
-if (!isProduction) {
-  ContentSecurityPolicy["connect-src"].push("ws:", "wss:");
-}
-
 // Only force HTTPS in production to avoid breaking local dev
 if (isProduction) {
   ContentSecurityPolicy["upgrade-insecure-requests"] = [];
@@ -205,7 +200,7 @@ const nextConfig: NextConfig = {
       {
         // Provider-backed pages must not be cached (compliance requirement)
         // These pages render ephemeral Google Places content
-        source: "/place/g/:path*",
+        source: "/place/:path*",
         headers: [
           {
             key: "Cache-Control",
