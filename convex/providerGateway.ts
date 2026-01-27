@@ -25,7 +25,7 @@ import {
 } from "./fieldSets";
 
 // Convex imports (now that Convex is initialized)
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { query, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -613,6 +613,22 @@ export const updateFeatureFlag = internalMutation({
 
 // Internal query to get feature flag status
 export const getFeatureFlag = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, args): Promise<{ enabled: boolean; reason?: string }> => {
+    const flag = await ctx.db
+      .query("featureFlags")
+      .withIndex("by_key", (q) => q.eq("key", args.key))
+      .first();
+
+    return {
+      enabled: flag?.enabled ?? true, // Default to enabled
+      reason: flag?.reason,
+    };
+  },
+});
+
+// Public query to check feature flag status (for API routes)
+export const checkFeatureFlag = query({
   args: { key: v.string() },
   handler: async (ctx, args): Promise<{ enabled: boolean; reason?: string }> => {
     const flag = await ctx.db

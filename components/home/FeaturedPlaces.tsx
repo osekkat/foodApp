@@ -11,7 +11,6 @@ interface FeaturedPlacesProps {
 }
 
 export function FeaturedPlaces({ city = "marrakech" }: FeaturedPlacesProps) {
-  // @ts-expect-error - TypeScript depth limit with complex Convex types
   const places = useQuery(api.curatedPlaces.getFeaturedPlaces, { city, limit: 6 });
 
   if (places === undefined) {

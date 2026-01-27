@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function CityPicker() {
-  // @ts-expect-error - TypeScript depth limit with complex Convex types
   const cities = useQuery(api.cities.getFeatured);
 
   if (cities === undefined) {
