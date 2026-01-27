@@ -291,7 +291,10 @@ function logSingleflightEvent(type: "hit" | "miss", key: string): void {
 
 /**
  * Clear all in-flight requests (for testing only)
- * WARNING: This will cause waiting callers to hang indefinitely
+ *
+ * NOTE: Existing waiters will still receive their results (they hold
+ * references to the promises). However, new callers after clearing
+ * won't detect those in-flight requests and may create duplicates.
  */
 export function _clearInFlight(): void {
   inFlight.clear();

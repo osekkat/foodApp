@@ -473,4 +473,33 @@ describe("Edge Cases", () => {
 
     expect(result.data).toBe("special");
   });
+
+  it("should track in-flight keys for debugging", async () => {
+    let resolve1: (v: string) => void;
+    let resolve2: (v: string) => void;
+    const pending1 = new Promise<string>((r) => {
+      resolve1 = r;
+    });
+    const pending2 = new Promise<string>((r) => {
+      resolve2 = r;
+    });
+
+    expect(_getInFlightKeys()).toEqual([]);
+
+    const p1 = singleflight("debug-key-1", () => pending1);
+    expect(_getInFlightKeys()).toEqual(["debug-key-1"]);
+
+    const p2 = singleflight("debug-key-2", () => pending2);
+    expect(_getInFlightKeys()).toContain("debug-key-1");
+    expect(_getInFlightKeys()).toContain("debug-key-2");
+    expect(_getInFlightKeys().length).toBe(2);
+
+    resolve1!("done");
+    await p1;
+    expect(_getInFlightKeys()).toEqual(["debug-key-2"]);
+
+    resolve2!("done");
+    await p2;
+    expect(_getInFlightKeys()).toEqual([]);
+  });
 });
