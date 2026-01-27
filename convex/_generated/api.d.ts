@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as alerts from "../alerts.js";
 import type * as auth from "../auth.js";
 import type * as auth_rbac from "../auth/rbac.js";
 import type * as cities from "../cities.js";
@@ -25,8 +26,10 @@ import type * as profile from "../profile.js";
 import type * as providerGateway from "../providerGateway.js";
 import type * as rateLimit from "../rateLimit.js";
 import type * as reviews from "../reviews.js";
+import type * as search from "../search.js";
 import type * as serviceMode from "../serviceMode.js";
 import type * as systemHealth from "../systemHealth.js";
+import type * as tags from "../tags.js";
 
 import type {
   ApiFromModules,
@@ -35,6 +38,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  alerts: typeof alerts;
   auth: typeof auth;
   "auth/rbac": typeof auth_rbac;
   cities: typeof cities;
@@ -52,8 +56,10 @@ declare const fullApi: ApiFromModules<{
   providerGateway: typeof providerGateway;
   rateLimit: typeof rateLimit;
   reviews: typeof reviews;
+  search: typeof search;
   serviceMode: typeof serviceMode;
   systemHealth: typeof systemHealth;
+  tags: typeof tags;
 }>;
 
 /**

@@ -14,6 +14,7 @@
 import { query, mutation, QueryCtx, MutationCtx } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import type { Id, Doc } from "./_generated/dataModel";
+import { aggregateDishesFromReview } from "./tags";
 
 // ============================================================================
 // Types
@@ -194,6 +195,11 @@ export const upsertReview = mutation({
 
     // Update place aggregates
     await updatePlaceAggregates(ctx, args.placeKey);
+
+    // Aggregate dish mentions (only for new reviews or if dishes changed)
+    if (isNewReview || args.dishesTried) {
+      await aggregateDishesFromReview(ctx, args.placeKey, args.dishesTried);
+    }
 
     return { reviewId, isNewReview };
   },
