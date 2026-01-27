@@ -1,4 +1,10 @@
 import { notFound } from "next/navigation";
+import { PlaceDetails } from "@/components/places";
+import { fetchQuery } from "convex/nextjs";
+import { api } from "@/convex/_generated/api";
+
+// Curated pages can be indexed (SEO-friendly)
+// They contain only owned content
 
 interface CuratedPlacePageProps {
   params: Promise<{
@@ -8,6 +14,26 @@ interface CuratedPlacePageProps {
 
 export async function generateMetadata({ params }: CuratedPlacePageProps) {
   const { slug } = await params;
+
+  // Fetch curated place data for metadata
+  try {
+    const curatedPlace = await fetchQuery(api.curatedPlaces.getBySlug, { slug });
+
+    if (curatedPlace) {
+      return {
+        title: `${curatedPlace.title} - Morocco Food Discovery`,
+        description: curatedPlace.summary,
+        openGraph: {
+          title: curatedPlace.title,
+          description: curatedPlace.summary,
+          type: "website",
+        },
+      };
+    }
+  } catch {
+    // Fall through to default
+  }
+
   return {
     title: `${slug} - Curated Place`,
     description: `Discover ${slug} - a curated food spot in Morocco`,
@@ -23,16 +49,16 @@ export default async function CuratedPlacePage({
     notFound();
   }
 
+  // Derive placeKey from slug
+  const placeKey = `c:${slug}`;
+
   return (
     <div className="min-h-screen bg-white dark:bg-black">
-      <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-        <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
-          Curated Place
-        </h1>
-        <p className="mt-2 text-sm text-zinc-500">Slug: {slug}</p>
-        <p className="mt-4 text-zinc-600 dark:text-zinc-400">
-          Curated place details coming soon...
-        </p>
+      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+        <PlaceDetails
+          placeKey={placeKey}
+          curatedSlug={slug}
+        />
       </div>
     </div>
   );

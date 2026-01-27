@@ -17,6 +17,7 @@ import type * as fieldSets from "../fieldSets.js";
 import type * as http from "../http.js";
 import type * as lists from "../lists.js";
 import type * as metrics from "../metrics.js";
+import type * as placeDetails from "../placeDetails.js";
 import type * as places from "../places.js";
 import type * as providerGateway from "../providerGateway.js";
 import type * as rateLimit from "../rateLimit.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   lists: typeof lists;
   metrics: typeof metrics;
+  placeDetails: typeof placeDetails;
   places: typeof places;
   providerGateway: typeof providerGateway;
   rateLimit: typeof rateLimit;
