@@ -76,10 +76,14 @@ export const processPhotoModeration = internalAction({
       let nsfwScore: number | undefined;
       let exifStripped = false;
 
+      // Variable to hold processed image storageId (if we upload a new one)
+      let newStorageId: string | undefined;
+
       // Attempt to use sharp for image processing
       try {
-        // Dynamic import of sharp
-        const sharp = (await import("sharp")).default;
+        // Dynamic require of sharp (in Node.js runtime)
+        // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+        const sharp = require("sharp") as any;
 
         // Load image and strip EXIF
         const image = sharp(Buffer.from(imageBuffer));
@@ -95,6 +99,11 @@ export const processPhotoModeration = internalAction({
           .jpeg({ quality: 85 })
           .toBuffer();
 
+        // Upload the processed (EXIF-stripped) image to storage
+        // Convert Buffer to Uint8Array for Blob compatibility
+        const uint8Array = new Uint8Array(processedBuffer.buffer, processedBuffer.byteOffset, processedBuffer.byteLength);
+        const blob = new Blob([uint8Array], { type: "image/jpeg" });
+        newStorageId = await ctx.storage.store(blob);
         exifStripped = true;
 
         // Generate thumbnail for blurhash (4x3 components)
@@ -122,7 +131,7 @@ export const processPhotoModeration = internalAction({
       } catch (sharpError) {
         // Sharp not available - mark for manual processing
         console.warn("Sharp not available for image processing:", sharpError);
-        // Continue with basic validation
+        // Continue with basic validation - exifStripped stays false
       }
 
       // NSFW Detection via Cloud Vision (if configured)
@@ -202,6 +211,8 @@ export const processPhotoModeration = internalAction({
         blurhash,
         perceptualHash,
         exifStripped,
+        // Pass new storageId if we uploaded a processed image
+        newStorageId,
       });
     } catch (error) {
       console.error(`Error processing photo ${args.photoId}:`, error);

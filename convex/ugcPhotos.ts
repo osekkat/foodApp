@@ -291,8 +291,18 @@ export const updatePhotoModeration = internalMutation({
     blurhash: v.optional(v.string()),
     perceptualHash: v.optional(v.string()),
     exifStripped: v.boolean(),
+    // If a new processed image was uploaded, update storageId and delete old
+    newStorageId: v.optional(v.id("_storage")),
   },
   handler: async (ctx, args) => {
+    const photo = await ctx.db.get(args.photoId);
+    if (!photo) return;
+
+    // If we have a new processed image, delete the old one
+    if (args.newStorageId && args.newStorageId !== photo.storageId) {
+      await ctx.storage.delete(photo.storageId);
+    }
+
     await ctx.db.patch(args.photoId, {
       moderationStatus: args.moderationStatus as ModerationStatus,
       nsfwScore: args.nsfwScore,
@@ -301,6 +311,8 @@ export const updatePhotoModeration = internalMutation({
       blurhash: args.blurhash,
       perceptualHash: args.perceptualHash,
       exifStripped: args.exifStripped,
+      // Update storageId if we uploaded a processed version
+      ...(args.newStorageId && { storageId: args.newStorageId }),
     });
   },
 });
