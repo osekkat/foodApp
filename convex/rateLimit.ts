@@ -273,6 +273,9 @@ export const getRateLimitStatus = internalQuery({
 /**
  * Check rate limit and throw ConvexError if exceeded
  * Convenience wrapper for use in mutations/actions
+ *
+ * Note: This inlines the rate limit logic rather than calling checkRateLimit
+ * because Convex mutations cannot directly call other mutations.
  */
 export const enforceRateLimit = internalMutation({
   args: {
@@ -280,24 +283,75 @@ export const enforceRateLimit = internalMutation({
     userId: v.optional(v.string()),
     ip: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const result = await ctx.runMutation(
-      // @ts-expect-error - internal reference
-      { name: "rateLimit:checkRateLimit" },
-      args
-    );
+  handler: async (ctx, args): Promise<RateLimitResult> => {
+    const { action, userId, ip } = args;
+    const isAuth = !!userId;
+    const config = RATE_LIMITS[action]?.[isAuth ? "auth" : "anon"];
 
-    if (!result.allowed) {
-      const retryAfter = result.retryAfterMs ? Math.ceil(result.retryAfterMs / 1000) : 60;
+    // Unknown action or action not allowed for this user type
+    if (!config || config.limit === 0) {
+      throw new ConvexError({
+        code: "RATE_LIMITED",
+        message: "This action is not allowed.",
+        retryAfterSeconds: 0,
+        action,
+      });
+    }
+
+    // Build rate limit key
+    const key = userId ? `user:${userId}:${action}` : `ip:${ip}:${action}`;
+    const now = Date.now();
+
+    // Get existing rate limit record
+    const existing = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+
+    // Check if we're in a new window
+    if (!existing || existing.windowStart + config.window < now) {
+      // New window - create or reset record
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          windowStart: now,
+          count: 1,
+        });
+      } else {
+        await ctx.db.insert("rateLimits", {
+          key,
+          windowStart: now,
+          count: 1,
+        });
+      }
+
+      return {
+        allowed: true,
+        remaining: config.limit - 1,
+        resetAt: now + config.window,
+      };
+    }
+
+    // Check if limit exceeded
+    if (existing.count >= config.limit) {
+      const resetAt = existing.windowStart + config.window;
+      const retryAfterMs = resetAt - now;
+      const retryAfter = Math.ceil(retryAfterMs / 1000);
       throw new ConvexError({
         code: "RATE_LIMITED",
         message: `Too many requests. Please try again in ${retryAfter} seconds.`,
         retryAfterSeconds: retryAfter,
-        action: args.action,
+        action,
       });
     }
 
-    return result;
+    // Increment counter
+    await ctx.db.patch(existing._id, { count: existing.count + 1 });
+
+    return {
+      allowed: true,
+      remaining: config.limit - existing.count - 1,
+      resetAt: existing.windowStart + config.window,
+    };
   },
 });
 

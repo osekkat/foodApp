@@ -399,7 +399,6 @@ export const getLatencyPercentiles = query({
 export const getDashboardSummary = query({
   handler: async (ctx) => {
     const oneHourAgo = 3600000;
-    const oneDayAgo = 86400000;
 
     // Get recent metrics counts
     const recentMetrics = await ctx.db
