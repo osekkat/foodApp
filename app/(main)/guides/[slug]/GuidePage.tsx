@@ -126,10 +126,14 @@ export function GuidePage({ initialGuide, slug }: GuidePageProps) {
 }
 
 function PlaceCard({ place, index }: { place: PlaceData; index: number }) {
-  const href =
-    place.type === "curated"
-      ? `/place/c/${place.placeKey.slice(2)}`
-      : `/place/${encodeURIComponent(place.placeKey)}`;
+  // Construct proper URL based on placeKey format:
+  // - "c:slug" -> /place/c/slug
+  // - "g:ChIJ..." -> /place/g/ChIJ...
+  const href = place.placeKey.startsWith("c:")
+    ? `/place/c/${place.placeKey.slice(2)}`
+    : place.placeKey.startsWith("g:")
+      ? `/place/g/${place.placeKey.slice(2)}`
+      : `/place/${encodeURIComponent(place.placeKey)}`; // Fallback for unknown formats
 
   if (place.type === "curated") {
     return (

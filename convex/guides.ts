@@ -13,7 +13,7 @@
 
 import { query, mutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { requireRole, logAction, getAuthUser, type Role } from "./auth/rbac";
+import { requireRole, logAction, getAuthUser } from "./auth/rbac";
 import type { Id, Doc } from "./_generated/dataModel";
 
 // ============================================================================
@@ -96,8 +96,8 @@ export const getFeaturedGuides = query({
       filtered = filtered.filter((g) => g.locale === args.locale);
     }
 
-    // Sort by sortOrder and take limit
-    return filtered.sort((a, b) => a.sortOrder - b.sortOrder).slice(0, limit);
+    // Results are already sorted by sortOrder from index - just take limit
+    return filtered.slice(0, limit);
   },
 });
 
@@ -218,7 +218,7 @@ export const getGuidePlaces = query({
             .withIndex("by_slug", (q) => q.eq("slug", slug))
             .first();
 
-          if (curated && curated.publishedAt) {
+          if (curated && curated.publishedAt && curated.publishedAt <= Date.now()) {
             return {
               placeKey,
               type: "curated" as const,
