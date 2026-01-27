@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as auth_rbac from "../auth/rbac.js";
 import type * as cities from "../cities.js";
 import type * as crons from "../crons.js";
 import type * as curatedPlaces from "../curatedPlaces.js";
@@ -32,6 +33,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  "auth/rbac": typeof auth_rbac;
   cities: typeof cities;
   crons: typeof crons;
   curatedPlaces: typeof curatedPlaces;
