@@ -399,6 +399,44 @@ export const providerRequest = internalAction({
       };
     }
 
+    // Validate required parameters for implemented endpoints
+    if (endpointClass === "place_details" && !args.placeId) {
+      return {
+        success: false,
+        error: {
+          code: "MISSING_PARAMETER",
+          message: "placeId is required for place_details endpoint",
+          retryable: false,
+        },
+        metadata: {
+          requestId,
+          latencyMs: Date.now() - startTime,
+          costClass: "none",
+          fieldSet: fieldSetKey,
+          endpointClass,
+          cacheHit: false,
+        },
+      };
+    }
+    if (endpointClass === "text_search" && !args.query) {
+      return {
+        success: false,
+        error: {
+          code: "MISSING_PARAMETER",
+          message: "query is required for text_search endpoint",
+          retryable: false,
+        },
+        metadata: {
+          requestId,
+          latencyMs: Date.now() - startTime,
+          costClass: "none",
+          fieldSet: fieldSetKey,
+          endpointClass,
+          cacheHit: false,
+        },
+      };
+    }
+
     // Check circuit breaker
     const circuitState = await ctx.runQuery(internal.providerGateway.getCircuitState, {
       service: "google_places",
@@ -524,11 +562,24 @@ export const providerRequest = internalAction({
           }),
         });
       } else {
-        // This shouldn't happen if endpoint class validation passed
-        throw new Error(
-          `Missing required parameters for ${endpointClass}: ` +
-          `place_details requires placeId, text_search requires query`
-        );
+        // This should never happen - parameter validation above should catch this
+        // If we get here, it's a bug in the validation logic
+        return {
+          success: false,
+          error: {
+            code: "INTERNAL_ERROR",
+            message: "Unexpected endpoint/parameter combination - this is a bug",
+            retryable: false,
+          },
+          metadata: {
+            requestId,
+            latencyMs: Date.now() - startTime,
+            costClass: "none",
+            fieldSet: fieldSetKey,
+            endpointClass,
+            cacheHit: false,
+          },
+        };
       }
 
       const response = await fetch(url, {
