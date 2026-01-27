@@ -59,6 +59,15 @@ export const processPhotoModeration = internalAction({
       return;
     }
 
+    // Declare processing variables outside try so they're accessible in catch for cleanup
+    let width: number | undefined;
+    let height: number | undefined;
+    let blurhash: string | undefined;
+    let perceptualHash: string | undefined;
+    let nsfwScore: number | undefined;
+    let exifStripped = false;
+    let newStorageId: string | undefined;
+
     try {
       // Fetch the image
       const response = await fetch(imageUrl);
@@ -67,17 +76,6 @@ export const processPhotoModeration = internalAction({
       }
 
       const imageBuffer = await response.arrayBuffer();
-
-      // Process the image using sharp (if available)
-      let width: number | undefined;
-      let height: number | undefined;
-      let blurhash: string | undefined;
-      let perceptualHash: string | undefined;
-      let nsfwScore: number | undefined;
-      let exifStripped = false;
-
-      // Variable to hold processed image storageId (if we upload a new one)
-      let newStorageId: string | undefined;
 
       // Attempt to use sharp for image processing
       try {
@@ -218,10 +216,18 @@ export const processPhotoModeration = internalAction({
       console.error(`Error processing photo ${args.photoId}:`, error);
 
       // Mark as pending for manual review on processing error
+      // Pass newStorageId so it can be cleaned up if photo was deleted,
+      // or stored if the photo still exists (prevents storage leak)
       await ctx.runMutation(internalApi.ugcPhotos.updatePhotoModeration, {
         photoId: args.photoId,
         moderationStatus: "pending",
-        exifStripped: false,
+        exifStripped,
+        // Include any processing results we did manage to compute
+        newStorageId,
+        width,
+        height,
+        blurhash,
+        perceptualHash,
       });
     }
   },
