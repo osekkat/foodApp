@@ -39,7 +39,7 @@ export default defineSchema({
     helpfulVotesReceived: v.optional(v.number()), // Denormalized for trust scoring
   })
     .index("email", ["email"])
-    .index("by_email", ["email"]),
+    .index("phone", ["phone"]),
 
   // User reputation for trust tiers
   userReputation: defineTable({
@@ -404,4 +404,40 @@ export default defineSchema({
     reason: v.optional(v.string()), // e.g. "budget_exceeded", "degraded_mode"
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
+
+  // ===========================================
+  // Service Mode State Machine
+  // ===========================================
+
+  // System state for service mode management
+  // Tracks current mode and triggers for graceful degradation
+  systemState: defineTable({
+    key: v.string(), // e.g. "service_mode"
+    // Service mode: 0=Normal, 1=Cost-Saver, 2=Provider-Limited, 3=Offline/Owned
+    currentMode: v.number(),
+    reason: v.string(), // e.g. "all_systems_nominal", "budget_threshold", "circuit_breaker_open"
+    enteredAt: v.number(), // Timestamp when entered this mode
+    // Trigger states (for debugging/transparency)
+    triggers: v.object({
+      providerHealthy: v.boolean(),
+      budgetOk: v.boolean(),
+      latencyOk: v.boolean(),
+      circuitBreakerClosed: v.boolean(),
+    }),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  // Service mode transition history (for audit/debugging)
+  serviceModeHistory: defineTable({
+    fromMode: v.number(),
+    toMode: v.number(),
+    reason: v.string(),
+    triggers: v.object({
+      providerHealthy: v.boolean(),
+      budgetOk: v.boolean(),
+      latencyOk: v.boolean(),
+      circuitBreakerClosed: v.boolean(),
+    }),
+    transitionedAt: v.number(),
+  }).index("by_recent", ["transitionedAt"]),
 });
