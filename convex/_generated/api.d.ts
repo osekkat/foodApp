@@ -27,6 +27,7 @@ import type * as providerGateway from "../providerGateway.js";
 import type * as rateLimit from "../rateLimit.js";
 import type * as reviews from "../reviews.js";
 import type * as search from "../search.js";
+import type * as searchCache from "../searchCache.js";
 import type * as serviceMode from "../serviceMode.js";
 import type * as systemHealth from "../systemHealth.js";
 import type * as tags from "../tags.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   rateLimit: typeof rateLimit;
   reviews: typeof reviews;
   search: typeof search;
+  searchCache: typeof searchCache;
   serviceMode: typeof serviceMode;
   systemHealth: typeof systemHealth;
   tags: typeof tags;

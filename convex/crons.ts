@@ -82,13 +82,25 @@ crons.interval(
 );
 
 /**
+ * Search Cache Cleanup
+ *
+ * Runs every hour to delete expired searchResultCache entries.
+ * Uses short TTL (15 minutes) so expired entries accumulate quickly.
+ */
+crons.interval(
+  "cleanup_search_cache",
+  { hours: 1 },
+  internalRef.searchCache.purgeExpiredSearchCache
+);
+
+/**
  * Future cron jobs to implement:
  *
  * Geo Expiry Purge - Delete expired lat/lng from places table
  * crons.daily("geo_expiry_purge", { hourUTC: 3 }, internal.maintenance.purgeExpiredGeo);
  *
- * Cache Cleanup - Delete expired mapTileCache and searchResultCache entries
- * crons.interval("cache_cleanup", { hours: 1 }, internal.maintenance.cleanupExpiredCaches);
+ * Map Tile Cache Cleanup - Delete expired mapTileCache entries
+ * crons.interval("cleanup_tile_cache", { hours: 1 }, internal.maintenance.cleanupMapTileCache);
  *
  * Aggregates Repair - Recompute favoritesCount, communityRatingAvg/Count
  * crons.daily("aggregates_repair", { hourUTC: 4 }, internal.maintenance.repairAggregates);

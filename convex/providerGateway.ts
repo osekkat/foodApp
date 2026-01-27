@@ -23,6 +23,11 @@ import {
   getCostTier,
   getMaxCost,
 } from "./fieldSets";
+import {
+  generateSearchCacheKey,
+  extractPlaceKeysFromSearchResponse,
+  SEARCH_CACHE_TTL_MS,
+} from "./searchCache";
 
 // Convex imports (now that Convex is initialized)
 import { query, mutation, internalAction, internalMutation, internalQuery } from "./_generated/server";
@@ -1175,6 +1180,51 @@ export const providerRequest = internalAction({
       });
     }
 
+    // =========================================================================
+    // Search Cache Check (text_search only)
+    // =========================================================================
+    // Check cache BEFORE circuit breaker and budget checks
+    // This allows cached responses even when provider is unavailable
+    let searchCacheKey: string | null = null;
+
+    if (endpointClass === "text_search" && args.query) {
+      searchCacheKey = generateSearchCacheKey({
+        query: args.query,
+        language: args.language,
+        locationBias: args.locationBias,
+        locationRestriction: args.locationRestriction,
+      });
+
+      const cacheResult = await ctx.runQuery(
+        internal.searchCache.checkSearchCache,
+        { cacheKey: searchCacheKey }
+      );
+
+      if (cacheResult.cacheHit) {
+        // Return cached placeKeys as search results
+        // The caller should fetch fresh details for these IDs
+        return finalize({
+          success: true,
+          data: {
+            // Format as a search response with just placeKeys
+            places: cacheResult.placeKeys.map((key: string) => ({
+              placeKey: key,
+              // Caller must fetch details separately
+            })),
+            cachedResult: true,
+          },
+          metadata: {
+            requestId,
+            latencyMs: Date.now() - startTime,
+            costClass: "none", // Cache hit = no API cost
+            fieldSet: fieldSetKey,
+            endpointClass,
+            cacheHit: true,
+          },
+        });
+      }
+    }
+
     // Check circuit breaker
     const circuitState = await ctx.runQuery(internal.providerGateway.getCircuitState, {
       service: "google_places",
@@ -1411,6 +1461,24 @@ export const providerRequest = internalAction({
 
       // IMPORTANT: Never log the response data!
       // Only return it to the caller
+
+      // =========================================================================
+      // Search Cache Write (text_search only)
+      // =========================================================================
+      // Cache placeKeys for future requests (policy-safe: IDs only, no content)
+      if (endpointClass === "text_search" && searchCacheKey) {
+        const placeKeys = extractPlaceKeysFromSearchResponse(data, "google");
+        if (placeKeys.length > 0) {
+          // Write cache asynchronously - don't block response
+          ctx.runMutation(internal.searchCache.writeSearchCache, {
+            cacheKey: searchCacheKey,
+            placeKeys,
+            provider: "google",
+          }).catch(() => {
+            // Ignore cache write failures - they're not critical
+          });
+        }
+      }
 
       return finalize({
         success: true,
