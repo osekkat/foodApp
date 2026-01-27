@@ -49,6 +49,18 @@ crons.daily(
 );
 
 /**
+ * Rate Limit Cleanup
+ *
+ * Runs daily at 3 AM UTC to delete expired rate limit records.
+ * Records older than the maximum window (24 hours) are removed.
+ */
+crons.daily(
+  "cleanup_expired_rate_limits",
+  { hourUTC: 3, minuteUTC: 0 },
+  internal.rateLimit.cleanupExpiredRateLimits
+);
+
+/**
  * Future cron jobs to implement:
  *
  * Geo Expiry Purge - Delete expired lat/lng from places table
