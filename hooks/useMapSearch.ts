@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation } from "convex/react";
 import type { MapBounds } from "@/components/maps";
+import { useMapTileCache } from "./useMapTileCache";
 
 /**
  * Debounce delay before showing "Search this area" button (ms)
@@ -14,6 +16,8 @@ const BOUNDS_DEBOUNCE_DELAY = 300;
 const SEARCH_COOLDOWN = 2000;
 
 export interface MapSearchResult {
+  /** Place key (formatted as "g:{placeId}") */
+  placeKey: string;
   /** Place ID (Google format) */
   placeId: string;
   /** Display name */
@@ -31,6 +35,10 @@ export interface UseMapSearchOptions {
   defaultQuery?: string;
   /** Language code for results */
   language?: string;
+  /** Map zoom level for tile caching */
+  zoom?: number;
+  /** Whether to use tile caching (default: true) */
+  useTileCache?: boolean;
 }
 
 export interface UseMapSearchResult {
@@ -54,6 +62,12 @@ export interface UseMapSearchResult {
   searchArea: (query?: string) => Promise<void>;
   /** Clear search state */
   clear: () => void;
+  /** Place keys from tile cache (if enabled) */
+  cachedPlaceKeys: string[];
+  /** Number of tile cache hits */
+  tileCacheHits: number;
+  /** Number of tile cache misses */
+  tileCacheMisses: number;
 }
 
 /**
@@ -88,9 +102,27 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
   const {
     debounceMs = BOUNDS_DEBOUNCE_DELAY,
     cooldownMs = SEARCH_COOLDOWN,
+    // TODO: Use defaultQuery and language when actual API call is implemented
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     defaultQuery = "restaurant",
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     language = "en",
+    zoom = 13,
+    useTileCache = true,
   } = options;
+
+  // Tile cache integration
+  const tileCache = useMapTileCache({
+    zoom,
+    enabled: useTileCache,
+  });
+
+  // Work around TypeScript depth limitations with complex Convex types
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+  const apiRef: any = require("@/convex/_generated/api").api;
+
+  // Mutation for writing tile cache
+  const writeTileCacheMutation = useMutation(apiRef.mapTileCache.writeTileCachePublic);
 
   const [pendingBounds, setPendingBounds] = useState<MapBounds | null>(null);
   const [showSearchButton, setShowSearchButton] = useState(false);
@@ -137,6 +169,11 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         clearTimeout(debounceTimerRef.current);
       }
 
+      // Update tile cache with new viewport
+      if (useTileCache) {
+        tileCache.handleViewportChange(bounds);
+      }
+
       // Check if bounds changed significantly from last search
       if (!boundsChanged(bounds, lastSearchedBounds)) {
         setShowSearchButton(false);
@@ -146,16 +183,28 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
       // Debounce before showing button
       debounceTimerRef.current = setTimeout(() => {
         setPendingBounds(bounds);
+        // Show search button if bounds changed significantly
+        // Note: We don't check tileCache.uncachedTiles here because the query
+        // is async and may not have returned yet. The actual search logic
+        // will handle cached vs uncached tiles efficiently.
         setShowSearchButton(true);
       }, debounceMs);
     },
-    [debounceMs, lastSearchedBounds, boundsChanged]
+    // Note: tileCache is included because tileCache.handleViewportChange is called
+    // outside the setTimeout and needs the latest reference when zoom/enabled changes
+    [debounceMs, lastSearchedBounds, boundsChanged, useTileCache, tileCache]
   );
 
   /**
    * Perform bounded search
+   *
+   * When tile caching is enabled:
+   * 1. Uses cached placeKeys for already-fetched tiles
+   * 2. Only fetches from provider for uncached tiles
+   * 3. Writes new results to tile cache
    */
   const searchArea = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async (query?: string) => {
       if (!pendingBounds) return;
       if (cooldownRemaining > 0) return;
@@ -164,36 +213,85 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
       abortControllerRef.current?.abort();
       abortControllerRef.current = new AbortController();
 
-      const searchQuery = query || defaultQuery;
-
       try {
         setIsLoading(true);
         setError(null);
         setShowSearchButton(false);
 
-        // TODO: Replace with actual Convex action call when public action is created
-        // This would call the ProviderGateway with TEXT_SEARCH field set
-        // const result = await textSearch({
-        //   fieldSet: "TEXT_SEARCH",
-        //   endpointClass: "text_search",
-        //   textQuery: searchQuery,
-        //   locationRestriction: {
-        //     rectangle: {
-        //       low: { latitude: pendingBounds.south, longitude: pendingBounds.west },
-        //       high: { latitude: pendingBounds.north, longitude: pendingBounds.east },
-        //     },
-        //   },
-        //   language,
-        // });
+        // Collect results: start with cached placeKeys
+        const allPlaceKeys = new Set<string>();
+
+        // Add cached placeKeys if tile caching is enabled
+        if (useTileCache) {
+          for (const key of tileCache.cachedPlaceKeys) {
+            allPlaceKeys.add(key);
+          }
+        }
+
+        // Fetch uncached tiles from provider
+        if (!useTileCache || tileCache.uncachedTiles.length > 0) {
+          const tilesToFetch = useTileCache
+            ? tileCache.uncachedTiles
+            : [{ tileKey: "viewport", bounds: pendingBounds }];
+
+          for (const tile of tilesToFetch) {
+            // Check if request was aborted
+            if (abortControllerRef.current.signal.aborted) {
+              return;
+            }
+
+            // TODO: Replace with actual Convex action call
+            // This would call the ProviderGateway with TEXT_SEARCH field set
+            // const result = await textSearch({
+            //   fieldSet: "TEXT_SEARCH",
+            //   endpointClass: "text_search",
+            //   textQuery: query || defaultQuery,
+            //   locationRestriction: {
+            //     rectangle: {
+            //       low: { latitude: tile.bounds.south, longitude: tile.bounds.west },
+            //       high: { latitude: tile.bounds.north, longitude: tile.bounds.east },
+            //     },
+            //   },
+            //   language,
+            // });
+
+            // Mock: In production, extract placeKeys from provider response
+            const fetchedPlaceKeys: string[] = [];
+
+            // Add fetched placeKeys to results
+            for (const key of fetchedPlaceKeys) {
+              allPlaceKeys.add(key);
+            }
+
+            // Write to tile cache (only for real tiles, not the viewport fallback)
+            // Note: We cache even empty results to mark the tile as "checked, nothing here"
+            // This prevents re-fetching tiles with no places (e.g., ocean, industrial zones)
+            if (useTileCache && tile.tileKey !== "viewport") {
+              await writeTileCacheMutation({
+                tileKey: tile.tileKey,
+                zoom,
+                placeKeys: fetchedPlaceKeys,
+                provider: "google",
+              });
+            }
+          }
+        }
 
         // Check if request was aborted
         if (abortControllerRef.current.signal.aborted) {
           return;
         }
 
-        // Mock empty response - replace with actual API call
-        // In production, this would transform the provider response
-        setResults([]);
+        // Convert placeKeys to results (in production, would fetch details for visible ones)
+        // For now, create stub results
+        const newResults: MapSearchResult[] = Array.from(allPlaceKeys).map((placeKey) => ({
+          placeKey,
+          placeId: placeKey.replace(/^g:/, ""),
+          displayName: "", // Would come from place details
+          location: { lat: 0, lng: 0 }, // Would come from place details
+        }));
+
+        setResults(newResults);
         setLastSearchedBounds(pendingBounds);
         setPendingBounds(null);
 
@@ -228,7 +326,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         setIsLoading(false);
       }
     },
-    [pendingBounds, cooldownRemaining, cooldownMs, defaultQuery, language]
+    [pendingBounds, cooldownRemaining, cooldownMs, useTileCache, tileCache, zoom, writeTileCacheMutation]
   );
 
   /**
@@ -284,5 +382,9 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
     handleBoundsChange,
     searchArea,
     clear,
+    // Tile cache info
+    cachedPlaceKeys: useTileCache ? tileCache.cachedPlaceKeys : [],
+    tileCacheHits: useTileCache ? tileCache.cacheHits : 0,
+    tileCacheMisses: useTileCache ? tileCache.cacheMisses : 0,
   };
 }

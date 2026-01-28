@@ -387,13 +387,16 @@ export default defineSchema({
     .index("by_featured", ["featured", "sortOrder"]),
 
   // ===========================================
-  // Search History
+  // Search History & Popular Searches
   // ===========================================
 
-  // Recent searches (per user)
+  // Recent searches (per user) - short TTL, raw logs for aggregation
+  // Privacy: Raw queries retained max 24h, then aggregated with PII filtering
   recentSearches: defineTable({
     userId: v.id("users"),
     query: v.string(),
+    normalizedQuery: v.string(), // Pre-normalized for aggregation
+    city: v.optional(v.string()),
     filters: v.optional(
       v.object({
         city: v.optional(v.string()),
@@ -402,7 +405,25 @@ export default defineSchema({
     ),
     resultCount: v.number(),
     searchedAt: v.number(),
-  }).index("by_user_recent", ["userId", "searchedAt"]),
+  })
+    .index("by_user_recent", ["userId", "searchedAt"])
+    .index("by_searched_at", ["searchedAt"])
+    .index("by_city_searched_at", ["city", "searchedAt"]),
+
+  // Popular searches aggregates - privacy-safe (k-anonymity, PII filtered)
+  // Only queries with ≥20 unique users are displayed
+  searchAggregates: defineTable({
+    normalizedQuery: v.string(), // Normalized + PII filtered query
+    city: v.string(), // City scope (or "global")
+    count: v.number(), // Total search count
+    uniqueUsers: v.number(), // Sum of daily unique user counts (k-anonymity checked per day)
+    periodStart: v.number(), // Aggregation period start (Unix timestamp)
+    periodEnd: v.number(), // Aggregation period end (Unix timestamp)
+  })
+    .index("by_city_count", ["city", "count"])
+    .index("by_city_query", ["city", "normalizedQuery"]) // For efficient lookup during aggregation
+    .index("by_city_unique", ["city", "uniqueUsers"])
+    .index("by_period", ["periodStart"]),
 
   // ===========================================
   // Rate Limiting & System

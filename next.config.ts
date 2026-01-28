@@ -53,6 +53,7 @@ const ContentSecurityPolicy: Record<string, string[]> = {
     "https://maps.gstatic.com",
     "https://*.ggpht.com", // Google user content (Street View, etc.)
     "https://*.convex.cloud", // Convex storage for user uploads
+    "https://images.unsplash.com", // Unsplash for guide cover images
   ],
   "font-src": ["'self'", "https://fonts.gstatic.com"],
   "connect-src": [
@@ -181,6 +182,10 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "maps.gstatic.com",
+      },
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
       },
     ],
   },

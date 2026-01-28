@@ -94,13 +94,60 @@ crons.interval(
 );
 
 /**
+ * Map Tile Cache Cleanup
+ *
+ * Runs every hour to delete expired mapTileCache entries.
+ * Map tile cache uses 45-minute TTL, so expired entries accumulate.
+ */
+crons.interval(
+  "cleanup_tile_cache",
+  { hours: 1 },
+  internalRef.mapTileCache.purgeExpiredTileCache
+);
+
+/**
+ * Popular Searches Daily Aggregation
+ *
+ * Runs daily at 4 AM UTC to aggregate search queries from the last 24 hours.
+ * Applies k-anonymity (≥20 users) and PII filtering before storing aggregates.
+ * This powers the "Popular Searches" feature while protecting user privacy.
+ */
+crons.daily(
+  "aggregate_popular_searches",
+  { hourUTC: 4, minuteUTC: 0 },
+  internalRef.popularSearches.runDailyAggregation
+);
+
+/**
+ * Raw Search Log Cleanup
+ *
+ * Runs every 6 hours to delete raw search logs older than 24 hours.
+ * Privacy requirement: raw per-user queries must not be retained beyond 24h.
+ * Aggregated data (with k-anonymity) is retained for 30 days.
+ */
+crons.interval(
+  "cleanup_raw_search_logs",
+  { hours: 6 },
+  internalRef.popularSearches.purgeOldSearchLogs
+);
+
+/**
+ * Old Aggregates Cleanup
+ *
+ * Runs daily at 5 AM UTC to delete search aggregates older than 30 days.
+ * Keeps the searchAggregates table size manageable.
+ */
+crons.daily(
+  "cleanup_old_search_aggregates",
+  { hourUTC: 5, minuteUTC: 0 },
+  internalRef.popularSearches.purgeOldAggregates
+);
+
+/**
  * Future cron jobs to implement:
  *
  * Geo Expiry Purge - Delete expired lat/lng from places table
  * crons.daily("geo_expiry_purge", { hourUTC: 3 }, internal.maintenance.purgeExpiredGeo);
- *
- * Map Tile Cache Cleanup - Delete expired mapTileCache entries
- * crons.interval("cleanup_tile_cache", { hours: 1 }, internal.maintenance.cleanupMapTileCache);
  *
  * Aggregates Repair - Recompute favoritesCount, communityRatingAvg/Count
  * crons.daily("aggregates_repair", { hourUTC: 4 }, internal.maintenance.repairAggregates);

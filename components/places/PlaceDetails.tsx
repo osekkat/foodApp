@@ -1,8 +1,8 @@
 "use client";
 
-import { useQuery, useMutation, useAction } from "convex/react";
+import { useQuery, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { PlaceActions } from "./PlaceActions";
 import { PlaceHours } from "./PlaceHours";
 import { TasteTags } from "./TasteTags";
 import { ReviewCard } from "./ReviewCard";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
 
 interface ProviderPlaceData {
   id: string;
@@ -58,6 +59,12 @@ export function PlaceDetails({
   const [providerData, setProviderData] = useState<ProviderPlaceData | null>(null);
   const [providerError, setProviderError] = useState<string | null>(null);
   const [providerLoading, setProviderLoading] = useState(false);
+  const photosEnabled = useFeatureFlag("photos_enabled");
+  const providerMatches = !!googlePlaceId && providerData?.id === googlePlaceId;
+  const activeProviderData = providerMatches ? providerData : null;
+  const requestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
 
   // Fetch owned data from Convex
   const communityData = useQuery(api.placeDetails.getPlaceCommunityData, {
@@ -79,42 +86,70 @@ export function PlaceDetails({
   // Action to fetch provider data
   const fetchProviderDetails = useAction(api.placeDetails.fetchProviderDetails);
 
+  // Reset provider state when switching places
+  useEffect(() => {
+    requestIdRef.current += 1;
+    inFlightRef.current = false;
+    setProviderData(null);
+    setProviderError(null);
+    setProviderLoading(false);
+  }, [googlePlaceId]);
+
+  // Track mounted state to avoid setState after unmount
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Fetch provider data on mount (only for provider places)
   useEffect(() => {
-    if (googlePlaceId && !providerData && !providerLoading) {
+    if (googlePlaceId && !providerMatches && !providerError && !inFlightRef.current) {
+      const requestId = ++requestIdRef.current;
+      inFlightRef.current = true;
       setProviderLoading(true);
+
       fetchProviderDetails({
         googlePlaceId,
-        includePhotos: true,
+        includePhotos: photosEnabled,
       })
         .then((result) => {
+          if (!mountedRef.current || requestIdRef.current !== requestId) return;
           if (result.success && result.data) {
+            setProviderError(null);
             setProviderData(result.data);
           } else {
             setProviderError(result.error?.message || "Failed to load place details");
           }
         })
         .catch((err) => {
+          if (!mountedRef.current || requestIdRef.current !== requestId) return;
           setProviderError(err.message || "Failed to load place details");
         })
         .finally(() => {
+          if (!mountedRef.current || requestIdRef.current !== requestId) return;
+          inFlightRef.current = false;
           setProviderLoading(false);
         });
     }
-  }, [googlePlaceId, providerData, providerLoading, fetchProviderDetails]);
+  }, [googlePlaceId, providerMatches, providerError, fetchProviderDetails, photosEnabled]);
 
   // Derive display data from provider or curated
   const displayName =
-    providerData?.displayName?.text ||
+    activeProviderData?.displayName?.text ||
     curatedPlace?.title ||
     curatedOverlay?.title ||
     "Loading...";
 
   const formattedAddress =
-    providerData?.formattedAddress || (curatedPlace ? `${curatedPlace.neighborhood || ""}, ${curatedPlace.city}`.trim() : "");
+    activeProviderData?.formattedAddress ||
+    (curatedPlace
+      ? [curatedPlace.neighborhood, curatedPlace.city].filter(Boolean).join(", ")
+      : "");
 
   const primaryType =
-    providerData?.primaryType || curatedPlace?.tags?.[0] || "";
+    activeProviderData?.primaryType || curatedPlace?.tags?.[0] || "";
 
   const handleToggleFavorite = async () => {
     // TODO: Implement favorite toggle mutation
@@ -170,20 +205,20 @@ export function PlaceDetails({
         displayName={displayName}
         formattedAddress={formattedAddress}
         primaryType={primaryType}
-        providerRating={providerData?.rating}
-        providerRatingCount={providerData?.userRatingCount}
+        providerRating={activeProviderData?.rating}
+        providerRatingCount={activeProviderData?.userRatingCount}
         communityRating={communityData?.stats.communityRatingAvg}
         communityRatingCount={communityData?.stats.communityRatingCount}
-        priceLevel={providerData?.priceLevel}
+        priceLevel={activeProviderData?.priceLevel}
       />
 
       {/* Actions */}
       <PlaceActions
         placeKey={placeKey}
-        phoneNumber={providerData?.nationalPhoneNumber}
-        websiteUri={providerData?.websiteUri}
-        googleMapsUri={providerData?.googleMapsUri}
-        location={providerData?.location}
+        phoneNumber={activeProviderData?.nationalPhoneNumber}
+        websiteUri={activeProviderData?.websiteUri}
+        googleMapsUri={activeProviderData?.googleMapsUri}
+        location={activeProviderData?.location}
         hasFavorited={userStatus?.hasFavorited || false}
         isAuthenticated={userStatus?.isAuthenticated || false}
         onToggleFavorite={handleToggleFavorite}
@@ -192,11 +227,11 @@ export function PlaceDetails({
       <Separator />
 
       {/* Opening Hours */}
-      {providerData?.regularOpeningHours && (
+      {activeProviderData?.regularOpeningHours && (
         <>
           <PlaceHours
-            openNow={providerData.regularOpeningHours.openNow}
-            weekdayDescriptions={providerData.regularOpeningHours.weekdayDescriptions}
+            openNow={activeProviderData.regularOpeningHours.openNow}
+            weekdayDescriptions={activeProviderData.regularOpeningHours.weekdayDescriptions}
           />
           <Separator />
         </>
@@ -239,9 +274,9 @@ export function PlaceDetails({
       )}
 
       {/* Website Link */}
-      {providerData?.websiteUri && (
+      {activeProviderData?.websiteUri && (
         <a
-          href={providerData.websiteUri}
+          href={activeProviderData.websiteUri}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 text-sm text-blue-600 hover:underline dark:text-blue-400"

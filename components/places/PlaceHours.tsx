@@ -3,6 +3,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Clock } from "lucide-react";
 import { useState } from "react";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
+import { useServiceMode } from "@/components/providers/ServiceModeProvider";
 
 interface PlaceHoursProps {
   openNow?: boolean;
@@ -11,6 +13,8 @@ interface PlaceHoursProps {
 
 export function PlaceHours({ openNow, weekdayDescriptions }: PlaceHoursProps) {
   const [expanded, setExpanded] = useState(false);
+  const openNowEnabled = useFeatureFlag("open_now_enabled");
+  const serviceMode = useServiceMode();
 
   if (!weekdayDescriptions || weekdayDescriptions.length === 0) {
     return null;
@@ -26,13 +30,16 @@ export function PlaceHours({ openNow, weekdayDescriptions }: PlaceHoursProps) {
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <Clock className="h-4 w-4 text-zinc-500" />
-        {openNow !== undefined && (
+        {openNow !== undefined && openNowEnabled && (
           <Badge
             variant={openNow ? "default" : "secondary"}
             className={openNow ? "bg-green-600" : ""}
           >
             {openNow ? "Open now" : "Closed"}
           </Badge>
+        )}
+        {openNow !== undefined && !openNowEnabled && serviceMode.currentMode === 1 && (
+          <span className="text-xs text-zinc-500">Reduced features to keep things fast</span>
         )}
         <button
           onClick={() => setExpanded(!expanded)}

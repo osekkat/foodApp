@@ -1,4 +1,4 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, action } from "./_generated/server";
 import { v } from "convex/values";
 
 /**
@@ -8,6 +8,35 @@ import { v } from "convex/values";
  * - NEVER persist provider content (name/address/phone/hours/ratings/photos)
  * - ONLY persist: placeKey, lat/lng (with expiry), community aggregates
  */
+
+// Autocomplete action calling provider gateway
+export const autocomplete = action({
+  args: {
+    input: v.string(),
+    sessionToken: v.optional(v.string()),
+    locationBias: v.optional(v.object({
+      lat: v.number(),
+      lng: v.number(),
+      radiusMeters: v.optional(v.number()),
+    })),
+    language: v.optional(v.string()),
+    includedPrimaryTypes: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args): Promise<unknown> => {
+    // Work around TypeScript depth limitations with complex Convex types
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+    const internal: any = require("./_generated/api").internal;
+    return await ctx.runAction(internal.providerGateway.providerRequest, {
+      endpointClass: "autocomplete",
+      fieldSet: "AUTOCOMPLETE",
+      input: args.input,
+      sessionToken: args.sessionToken,
+      locationBias: args.locationBias,
+      language: args.language,
+      includedPrimaryTypes: args.includedPrimaryTypes,
+    });
+  },
+});
 
 // Get or create a place by placeKey
 export const getOrCreate = mutation({

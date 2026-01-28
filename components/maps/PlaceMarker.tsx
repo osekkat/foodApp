@@ -96,15 +96,13 @@ export function PlaceMarker({ place, onClick, clusterer }: PlaceMarkerProps) {
 }
 
 /**
- * Custom marker with info window (for selected place)
- * Use this for the currently selected place to show more info
+ * Custom marker for the currently selected place
+ * Renders with distinct purple styling and higher z-index
  */
 export function SelectedPlaceMarker({
   place,
-  onClose,
 }: {
   place: PlaceMarkerData;
-  onClose: () => void;
 }) {
   const position = useMemo(
     () => ({

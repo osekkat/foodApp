@@ -2,7 +2,7 @@
 
 import { GoogleMap, MarkerClusterer } from "@react-google-maps/api";
 import type { Clusterer } from "@react-google-maps/marker-clusterer";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlaceMarker, type PlaceMarkerData } from "./PlaceMarker";
 import { MOROCCO_MAP_STYLES } from "./mapStyles";
 
@@ -29,7 +29,7 @@ const containerStyle = {
 
 /**
  * Cluster options for marker clustering
- * - Enable clustering when >50 markers visible
+ * - Enable clustering when 3+ markers are nearby
  * - Custom cluster styling
  */
 const CLUSTER_OPTIONS = {
@@ -166,6 +166,15 @@ export function MapView({
     [onPlaceClick]
   );
 
+  // Cleanup throttle timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (throttleRef.current) {
+        clearTimeout(throttleRef.current);
+      }
+    };
+  }, []);
+
   // Render markers with or without clustering
   const renderMarkers = useCallback(
     (clusterer?: Clusterer) => {
@@ -201,23 +210,4 @@ export function MapView({
       </GoogleMap>
     </div>
   );
-}
-
-/**
- * Get the current visible bounds of the map
- * Useful for implementing "search this area" feature
- */
-export function useMapBounds(mapRef: React.RefObject<google.maps.Map | null>): MapBounds | null {
-  const bounds = mapRef.current?.getBounds();
-  if (!bounds) return null;
-
-  const ne = bounds.getNorthEast();
-  const sw = bounds.getSouthWest();
-
-  return {
-    north: ne.lat(),
-    south: sw.lat(),
-    east: ne.lng(),
-    west: sw.lng(),
-  };
 }

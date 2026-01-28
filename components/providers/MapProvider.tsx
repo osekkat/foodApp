@@ -53,20 +53,8 @@ export function MapProvider({ children }: MapProviderProps) {
       googleMapsApiKey={apiKey}
       libraries={GOOGLE_MAPS_LIBRARIES}
       onError={handleError}
-      loadingElement={<MapLoadingFallback />}
     >
       {children}
     </LoadScript>
-  );
-}
-
-/**
- * Loading fallback shown while Google Maps script loads
- */
-function MapLoadingFallback() {
-  return (
-    <div className="flex items-center justify-center p-4">
-      <div className="animate-pulse text-muted-foreground">Loading maps...</div>
-    </div>
   );
 }

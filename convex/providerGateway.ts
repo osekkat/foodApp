@@ -26,8 +26,8 @@ import {
 import {
   generateSearchCacheKey,
   extractPlaceKeysFromSearchResponse,
-  SEARCH_CACHE_TTL_MS,
 } from "./searchCache";
+import { singleflight, detailsKey, autocompleteKey } from "../lib/singleflight";
 
 // Convex imports (now that Convex is initialized)
 import { query, mutation, internalAction, internalMutation, internalQuery } from "./_generated/server";
@@ -230,6 +230,80 @@ export function statusToErrorCode(status: number): string {
     default:
       return `HTTP_${status}`;
   }
+}
+
+// ============================================================================
+// Priority Classes for Load Shedding
+// ============================================================================
+
+/**
+ * Priority classes (1 = highest, 4 = lowest)
+ *
+ * P1: Place details - Explicit user click, highest intent
+ * P2: Search results - Explicit search submit
+ * P3: Autocomplete - Typing, can degrade gracefully
+ * P4: Photos + 'more results' - Nice to have, shed first
+ */
+export type PriorityClass = 1 | 2 | 3 | 4;
+
+/**
+ * Map endpoint classes to priority classes
+ */
+export const ENDPOINT_TO_PRIORITY: Record<EndpointClass, PriorityClass> = {
+  place_details: 1,   // P1: Highest priority - explicit user intent
+  text_search: 2,     // P2: Search results
+  nearby_search: 2,   // P2: Map search (same as text search)
+  autocomplete: 3,    // P3: Can degrade gracefully
+  photos: 4,          // P4: Shed first
+  health: 1,          // P1: Health checks are critical
+};
+
+/**
+ * Load shedding configuration
+ */
+export const LOAD_SHEDDING_CONFIG = {
+  /** Max concurrent provider calls per region (bulkhead) */
+  maxConcurrentCalls: 25,
+
+  /** Queue depths by priority class (P4 has limited queue) */
+  queueDepths: {
+    1: Infinity,  // P1: Never queue-limited
+    2: 50,        // P2: Generous queue
+    3: 20,        // P3: Moderate queue
+    4: 5,         // P4: Small queue - shed when full
+  } as Record<PriorityClass, number>,
+
+  /** Load levels and their thresholds (percentage of maxConcurrentCalls) */
+  loadLevels: {
+    normal: 0.5,    // < 50% = normal
+    elevated: 0.75, // 50-75% = elevated
+    high: 0.9,      // 75-90% = high
+    critical: 1.0,  // >= 90% = critical
+  },
+
+  /** Which priorities to shed at each load level */
+  sheddingPolicy: {
+    normal: [],           // Shed nothing
+    elevated: [4],        // Shed P4 only
+    high: [4, 3],         // Shed P4 and P3
+    critical: [4, 3],     // Shed P4 and P3 (keep P1 and P2)
+  } as Record<string, PriorityClass[]>,
+};
+
+/**
+ * Load level type
+ */
+export type LoadLevel = "normal" | "elevated" | "high" | "critical";
+
+/**
+ * Load shedding decision result
+ */
+export interface SheddingDecision {
+  proceed: boolean;
+  reason: "allowed" | "queue_full" | "load_shed" | "budget_shed";
+  loadLevel: LoadLevel;
+  currentLoad: number;
+  queueDepth: number;
 }
 
 // ============================================================================
@@ -582,6 +656,323 @@ const AUTO_MITIGATION_MAP: Record<EndpointClass, string[]> = {
   autocomplete: [], // Autocomplete is cheap, don't disable
   health: [], // Never disable health checks
 };
+
+// ============================================================================
+// Load Tracking & Shedding Decision Functions
+// ============================================================================
+
+/**
+ * Get current load level based on active concurrent requests
+ */
+export const getCurrentLoad = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<{
+    activeRequests: number;
+    loadLevel: LoadLevel;
+    loadPercent: number;
+    queueDepths: Record<string, number>;
+  }> => {
+    // Get active request count from rateLimits table
+    // Key format: "load:active_requests"
+    const activeRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", "load:active_requests"))
+      .first();
+
+    const activeRequests = activeRecord?.count ?? 0;
+    const maxConcurrent = LOAD_SHEDDING_CONFIG.maxConcurrentCalls;
+    const loadPercent = activeRequests / maxConcurrent;
+
+    // Determine load level
+    let loadLevel: LoadLevel;
+    if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.critical) {
+      loadLevel = "critical";
+    } else if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.high) {
+      loadLevel = "high";
+    } else if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.elevated) {
+      loadLevel = "elevated";
+    } else {
+      loadLevel = "normal";
+    }
+
+    // Get queue depths by priority
+    const queueDepths: Record<string, number> = {};
+    for (const priority of [1, 2, 3, 4] as PriorityClass[]) {
+      const queueRecord = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_key", (q) => q.eq("key", `load:queue:${priority}`))
+        .first();
+      queueDepths[`P${priority}`] = queueRecord?.count ?? 0;
+    }
+
+    return {
+      activeRequests,
+      loadLevel,
+      loadPercent,
+      queueDepths,
+    };
+  },
+});
+
+/**
+ * Check if a request should be shed based on priority and current load
+ */
+export const checkShouldShed = internalQuery({
+  args: {
+    priority: v.number(),
+    endpointClass: v.string(),
+  },
+  handler: async (ctx, args): Promise<SheddingDecision> => {
+    const priority = args.priority as PriorityClass;
+
+    // Get current load state
+    const activeRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", "load:active_requests"))
+      .first();
+
+    const activeRequests = activeRecord?.count ?? 0;
+    const maxConcurrent = LOAD_SHEDDING_CONFIG.maxConcurrentCalls;
+    const loadPercent = activeRequests / maxConcurrent;
+
+    // Determine load level
+    let loadLevel: LoadLevel;
+    if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.critical) {
+      loadLevel = "critical";
+    } else if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.high) {
+      loadLevel = "high";
+    } else if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.elevated) {
+      loadLevel = "elevated";
+    } else {
+      loadLevel = "normal";
+    }
+
+    // Get queue depth for this priority
+    const queueRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", `load:queue:${priority}`))
+      .first();
+    const queueDepth = queueRecord?.count ?? 0;
+
+    // Check if queue is full for this priority
+    const maxQueueDepth = LOAD_SHEDDING_CONFIG.queueDepths[priority];
+    if (queueDepth >= maxQueueDepth) {
+      return {
+        proceed: false,
+        reason: "queue_full",
+        loadLevel,
+        currentLoad: activeRequests,
+        queueDepth,
+      };
+    }
+
+    // Check if this priority should be shed at current load level
+    const prioritiesToShed = LOAD_SHEDDING_CONFIG.sheddingPolicy[loadLevel];
+    if (prioritiesToShed.includes(priority)) {
+      return {
+        proceed: false,
+        reason: "load_shed",
+        loadLevel,
+        currentLoad: activeRequests,
+        queueDepth,
+      };
+    }
+
+    // Request can proceed
+    return {
+      proceed: true,
+      reason: "allowed",
+      loadLevel,
+      currentLoad: activeRequests,
+      queueDepth,
+    };
+  },
+});
+
+/**
+ * Increment active request count when starting a request
+ */
+export const incrementActiveRequests = internalMutation({
+  args: { priority: v.number() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const priority = args.priority as PriorityClass;
+
+    // Increment global active requests
+    const activeRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", "load:active_requests"))
+      .first();
+
+    if (activeRecord) {
+      await ctx.db.patch(activeRecord._id, { count: activeRecord.count + 1 });
+    } else {
+      await ctx.db.insert("rateLimits", {
+        key: "load:active_requests",
+        windowStart: now,
+        count: 1,
+      });
+    }
+
+    // Increment queue depth for this priority
+    const queueRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", `load:queue:${priority}`))
+      .first();
+
+    if (queueRecord) {
+      await ctx.db.patch(queueRecord._id, { count: queueRecord.count + 1 });
+    } else {
+      await ctx.db.insert("rateLimits", {
+        key: `load:queue:${priority}`,
+        windowStart: now,
+        count: 1,
+      });
+    }
+  },
+});
+
+/**
+ * Decrement active request count when a request completes
+ */
+export const decrementActiveRequests = internalMutation({
+  args: { priority: v.number() },
+  handler: async (ctx, args) => {
+    const priority = args.priority as PriorityClass;
+
+    // Decrement global active requests (min 0)
+    const activeRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", "load:active_requests"))
+      .first();
+
+    if (activeRecord && activeRecord.count > 0) {
+      await ctx.db.patch(activeRecord._id, { count: activeRecord.count - 1 });
+    }
+
+    // Decrement queue depth for this priority (min 0)
+    const queueRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", `load:queue:${priority}`))
+      .first();
+
+    if (queueRecord && queueRecord.count > 0) {
+      await ctx.db.patch(queueRecord._id, { count: queueRecord.count - 1 });
+    }
+  },
+});
+
+/**
+ * Record a shed event for metrics
+ */
+export const recordShedEvent = internalMutation({
+  args: {
+    priority: v.number(),
+    endpointClass: v.string(),
+    reason: v.string(),
+    loadLevel: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+
+    // Increment shed counter for this priority
+    const shedKey = `shed:${args.priority}:${new Date().toISOString().split('T')[0]}`;
+    const shedRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", shedKey))
+      .first();
+
+    if (shedRecord) {
+      await ctx.db.patch(shedRecord._id, { count: shedRecord.count + 1 });
+    } else {
+      await ctx.db.insert("rateLimits", {
+        key: shedKey,
+        windowStart: now,
+        count: 1,
+      });
+    }
+
+    // Also record in metrics table for detailed tracking
+    await ctx.db.insert("metrics", {
+      name: "request_shed",
+      value: 1,
+      tags: {
+        endpoint: args.endpointClass,
+        // Store priority in costTier field (reusing existing field)
+        costTier: `P${args.priority}`,
+      },
+      timestamp: now,
+    });
+  },
+});
+
+/**
+ * Get shed statistics for monitoring
+ */
+export const getShedStats = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<{
+    today: Record<string, number>;
+    loadState: {
+      activeRequests: number;
+      loadLevel: LoadLevel;
+      queueDepths: Record<string, number>;
+    };
+  }> => {
+    const todayPrefix = `shed:`;
+    const todayDate = new Date().toISOString().split('T')[0];
+
+    // Get today's shed counts by priority
+    const shedCounts: Record<string, number> = {};
+    for (const priority of [1, 2, 3, 4] as PriorityClass[]) {
+      const shedRecord = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_key", (q) => q.eq("key", `${todayPrefix}${priority}:${todayDate}`))
+        .first();
+      shedCounts[`P${priority}`] = shedRecord?.count ?? 0;
+    }
+
+    // Get current load state
+    const activeRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", "load:active_requests"))
+      .first();
+
+    const activeRequests = activeRecord?.count ?? 0;
+    const maxConcurrent = LOAD_SHEDDING_CONFIG.maxConcurrentCalls;
+    const loadPercent = activeRequests / maxConcurrent;
+
+    let loadLevel: LoadLevel;
+    if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.critical) {
+      loadLevel = "critical";
+    } else if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.high) {
+      loadLevel = "high";
+    } else if (loadPercent >= LOAD_SHEDDING_CONFIG.loadLevels.elevated) {
+      loadLevel = "elevated";
+    } else {
+      loadLevel = "normal";
+    }
+
+    // Get queue depths
+    const queueDepths: Record<string, number> = {};
+    for (const priority of [1, 2, 3, 4] as PriorityClass[]) {
+      const queueRecord = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_key", (q) => q.eq("key", `load:queue:${priority}`))
+        .first();
+      queueDepths[`P${priority}`] = queueRecord?.count ?? 0;
+    }
+
+    return {
+      today: shedCounts,
+      loadState: {
+        activeRequests,
+        loadLevel,
+        queueDepths,
+      },
+    };
+  },
+});
 
 // Internal mutation to update feature flag
 export const updateFeatureFlag = internalMutation({
@@ -1036,10 +1427,24 @@ export const providerRequest = internalAction({
 
     const requestId = generateRequestId();
     const startTime = Date.now();
-    const finalize = (result: ProviderResult<unknown>) => {
-      emitProviderMetric(result);
+    const finalize = (
+      result: ProviderResult<unknown>,
+      options?: { emitMetrics?: boolean }
+    ) => {
+      if (options?.emitMetrics !== false) {
+        emitProviderMetric(result);
+      }
       return result;
     };
+
+    const withCallMetadata = (result: ProviderResult<unknown>): ProviderResult<unknown> => ({
+      ...result,
+      metadata: {
+        ...result.metadata,
+        requestId,
+        latencyMs: Date.now() - startTime,
+      },
+    });
 
     // Validate field set is in registry
     if (!(args.fieldSet in FIELD_SETS)) {
@@ -1180,6 +1585,9 @@ export const providerRequest = internalAction({
       });
     }
 
+    const language = args.language ?? "en";
+    const regionCode = args.regionCode ?? "MA";
+
     // =========================================================================
     // Search Cache Check (text_search only)
     // =========================================================================
@@ -1190,7 +1598,7 @@ export const providerRequest = internalAction({
     if (endpointClass === "text_search" && args.query) {
       searchCacheKey = generateSearchCacheKey({
         query: args.query,
-        language: args.language,
+        language,
         locationBias: args.locationBias,
         locationRestriction: args.locationRestriction,
       });
@@ -1225,49 +1633,180 @@ export const providerRequest = internalAction({
       }
     }
 
-    // Check circuit breaker
-    const circuitState = await ctx.runQuery(internal.providerGateway.getCircuitState, {
-      service: "google_places",
-    });
+    const priorityOverride = args.priority?.trim().toLowerCase();
+    const numericPriority = priorityOverride ? Number(priorityOverride) : Number.NaN;
+    const mappedPriority =
+      priorityOverride === "high"
+        ? 1
+        : priorityOverride === "normal"
+          ? 2
+          : priorityOverride === "low"
+            ? 3
+            : Number.NaN;
+    const resolvedPriority: PriorityClass =
+      Number.isInteger(numericPriority) &&
+      numericPriority >= 1 &&
+      numericPriority <= 4
+        ? (numericPriority as PriorityClass)
+        : Number.isFinite(mappedPriority)
+          ? (mappedPriority as PriorityClass)
+          : ENDPOINT_TO_PRIORITY[endpointClass] ?? 2;
 
-    if (circuitState === "open") {
-      return finalize({
-        success: false,
-        error: {
-          code: "CIRCUIT_OPEN",
-          message: "Provider service unavailable - circuit breaker open",
-          retryable: true,
-        },
-        metadata: {
-          requestId,
-          latencyMs: Date.now() - startTime,
-          costClass: getCostTier(fieldSetKey),
-          fieldSet: fieldSetKey,
+    // =========================================================================
+    // Singleflight Key (request coalescing)
+    // =========================================================================
+    let singleflightKey: string | null = null;
+
+    if (endpointClass === "place_details" && args.placeId) {
+      singleflightKey = `${detailsKey({
+        placeId: args.placeId,
+        fieldSet: fieldSetKey,
+        language,
+        region: regionCode,
+      })}:p${resolvedPriority}`;
+    } else if (endpointClass === "autocomplete" && args.input) {
+      const typesForKey =
+        args.includedPrimaryTypes ?? ["restaurant", "cafe", "bakery", "food"];
+      const typesKey = `|types:${typesForKey.slice().sort().join(",")}`;
+      const fieldSetKeySuffix = `|fs:${fieldSetKey}`;
+      singleflightKey = `${autocompleteKey({
+        input: args.input,
+        language,
+        region: regionCode,
+        locationBias: args.locationBias,
+      })}${typesKey}${fieldSetKeySuffix}:p${resolvedPriority}`;
+    } else if (endpointClass === "text_search" && searchCacheKey) {
+      singleflightKey = `text_search:${regionCode}:${fieldSetKey}:${searchCacheKey}:p${resolvedPriority}`;
+    }
+
+    const executeProviderCall = async (): Promise<ProviderResult<unknown>> => {
+      // =========================================================================
+      // Priority-Based Load Shedding Check
+      // =========================================================================
+      // Check if this request should be shed based on priority and current load
+      // Priority is determined by endpoint class or can be overridden by caller
+
+      // Check if we should shed this request
+      const sheddingDecision = await ctx.runQuery(
+        internal.providerGateway.checkShouldShed,
+        { priority: resolvedPriority, endpointClass }
+      );
+
+      if (!sheddingDecision.proceed) {
+        // Record the shed event for metrics
+        await ctx.runMutation(internal.providerGateway.recordShedEvent, {
+          priority: resolvedPriority,
           endpointClass,
-          cacheHit: false,
-        },
-      });
-    }
+          reason: sheddingDecision.reason,
+          loadLevel: sheddingDecision.loadLevel,
+        });
 
-    if (circuitState === "half_open") {
-      // Allow this request as a test - record the attempt
-      await ctx.runMutation(internal.providerGateway.recordHalfOpenAttempt, {
-        service: "google_places",
-      });
-    }
+        // Return appropriate response based on shed reason
+        const shedMessage = sheddingDecision.reason === "queue_full"
+          ? `Request queue full for priority ${resolvedPriority} - please retry`
+          : `Request shed due to high load (level: ${sheddingDecision.loadLevel})`;
 
-    // Check budget
-    if (!args.skipBudgetCheck) {
-      const budget = await ctx.runQuery(internal.providerGateway.checkBudget, {
-        endpointClass,
-      });
-
-      if (!budget.allowed) {
         return finalize({
           success: false,
           error: {
-            code: "BUDGET_EXCEEDED",
-            message: `Daily budget exceeded for ${endpointClass}`,
+            code: "LOAD_SHED",
+            message: shedMessage,
+            retryable: true,
+          },
+          metadata: {
+            requestId,
+            latencyMs: Date.now() - startTime,
+            costClass: getCostTier(fieldSetKey),
+            fieldSet: fieldSetKey,
+            endpointClass,
+            cacheHit: false,
+          },
+        });
+      }
+
+      // Increment active request count (will be decremented on completion)
+      await ctx.runMutation(internal.providerGateway.incrementActiveRequests, {
+        priority: resolvedPriority,
+      });
+
+      // Helper to ensure we decrement on any exit path
+      const decrementOnComplete = async () => {
+        try {
+          await ctx.runMutation(internal.providerGateway.decrementActiveRequests, {
+            priority: resolvedPriority,
+          });
+        } catch {
+          // Ignore decrement errors - better to leak a count than crash
+        }
+      };
+
+      // Check circuit breaker
+      const circuitState = await ctx.runQuery(internal.providerGateway.getCircuitState, {
+        service: "google_places",
+      });
+      if (circuitState === "open") {
+        await decrementOnComplete();
+        return finalize({
+          success: false,
+          error: {
+            code: "CIRCUIT_OPEN",
+            message: "Provider service unavailable - circuit breaker open",
+            retryable: true,
+          },
+          metadata: {
+            requestId,
+            latencyMs: Date.now() - startTime,
+            costClass: getCostTier(fieldSetKey),
+            fieldSet: fieldSetKey,
+            endpointClass,
+            cacheHit: false,
+          },
+        });
+      }
+
+      if (circuitState === "half_open") {
+        // Allow this request as a test - record the attempt
+        await ctx.runMutation(internal.providerGateway.recordHalfOpenAttempt, {
+          service: "google_places",
+        });
+      }
+
+      // Check budget
+      if (!args.skipBudgetCheck) {
+        const budget = await ctx.runQuery(internal.providerGateway.checkBudget, {
+          endpointClass,
+        });
+
+        if (!budget.allowed) {
+          await decrementOnComplete();
+          return finalize({
+            success: false,
+            error: {
+              code: "BUDGET_EXCEEDED",
+              message: `Daily budget exceeded for ${endpointClass}`,
+              retryable: false,
+            },
+            metadata: {
+              requestId,
+              latencyMs: Date.now() - startTime,
+              costClass: getCostTier(fieldSetKey),
+              fieldSet: fieldSetKey,
+              endpointClass,
+              cacheHit: false,
+            },
+          });
+        }
+      }
+
+      // Get API key from environment
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+      if (!apiKey) {
+        await decrementOnComplete();
+        return finalize({
+          success: false,
+          error: {
+            code: "CONFIG_ERROR",
+            message: "Google Places API key not configured",
             retryable: false,
           },
           metadata: {
@@ -1280,167 +1819,190 @@ export const providerRequest = internalAction({
           },
         });
       }
-    }
 
-    // Get API key from environment
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
-    if (!apiKey) {
-      return finalize({
-        success: false,
-        error: {
-          code: "CONFIG_ERROR",
-          message: "Google Places API key not configured",
-          retryable: false,
-        },
-        metadata: {
-          requestId,
-          latencyMs: Date.now() - startTime,
-          costClass: getCostTier(fieldSetKey),
-          fieldSet: fieldSetKey,
-          endpointClass,
-          cacheHit: false,
-        },
-      });
-    }
+      // Build request
+      const fieldMask = getFieldMask(fieldSetKey);
+      // For autocomplete, session token goes in body, not header
+      const sessionTokenForHeader = endpointClass === "autocomplete" ? undefined : args.sessionToken;
+      const headers = buildHeaders(apiKey, fieldMask, sessionTokenForHeader);
 
-    // Build request
-    const fieldMask = getFieldMask(fieldSetKey);
-    // For autocomplete, session token goes in body, not header
-    const sessionTokenForHeader = endpointClass === "autocomplete" ? undefined : args.sessionToken;
-    const headers = buildHeaders(apiKey, fieldMask, sessionTokenForHeader);
-    const language = args.language ?? "en";
-    const regionCode = args.regionCode ?? "MA";
+      // Execute request with timeout
+      const timeout = args.timeoutMs ?? 10000;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    // Execute request with timeout
-    const timeout = args.timeoutMs ?? 10000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+      try {
+        // Determine endpoint and build URL
+        let url: string;
+        let method: "GET" | "POST" = "GET";
+        let body: string | undefined;
 
-    try {
-      // Determine endpoint and build URL
-      let url: string;
-      let method: "GET" | "POST" = "GET";
-      let body: string | undefined;
-
-      if (args.placeId && endpointClass === "place_details") {
-        url = buildPlacesApiUrl("places", args.placeId);
-        url += `?languageCode=${language}&regionCode=${regionCode}`;
-      } else if (args.query && endpointClass === "text_search") {
-        url = buildPlacesApiUrl("places:searchText");
-        method = "POST";
-        body = JSON.stringify({
-          textQuery: args.query,
-          languageCode: language,
-          regionCode: regionCode,
-          ...(args.locationBias && {
-            locationBias: {
-              circle: {
-                center: {
-                  latitude: args.locationBias.lat,
-                  longitude: args.locationBias.lng,
-                },
-                radius: args.locationBias.radiusMeters ?? 5000,
-              },
-            },
-          }),
-          ...(args.locationRestriction && {
-            locationRestriction: {
-              rectangle: {
-                low: {
-                  latitude: args.locationRestriction.south,
-                  longitude: args.locationRestriction.west,
-                },
-                high: {
-                  latitude: args.locationRestriction.north,
-                  longitude: args.locationRestriction.east,
+        if (args.placeId && endpointClass === "place_details") {
+          url = buildPlacesApiUrl("places", args.placeId);
+          url += `?languageCode=${language}&regionCode=${regionCode}`;
+        } else if (args.query && endpointClass === "text_search") {
+          url = buildPlacesApiUrl("places:searchText");
+          method = "POST";
+          body = JSON.stringify({
+            textQuery: args.query,
+            languageCode: language,
+            regionCode: regionCode,
+            ...(args.locationBias && {
+              locationBias: {
+                circle: {
+                  center: {
+                    latitude: args.locationBias.lat,
+                    longitude: args.locationBias.lng,
+                  },
+                  radius: args.locationBias.radiusMeters ?? 5000,
                 },
               },
-            },
-          }),
-        });
-      } else if (args.input && endpointClass === "autocomplete") {
-        url = buildPlacesApiUrl("places:autocomplete");
-        method = "POST";
-        body = JSON.stringify({
-          input: args.input,
-          languageCode: language,
-          regionCode: regionCode,
-          // Session token for cost bundling (autocomplete + place details = one charge)
-          ...(args.sessionToken && { sessionToken: args.sessionToken }),
-          // Filter to food-related place types
-          ...(args.includedPrimaryTypes && {
-            includedPrimaryTypes: args.includedPrimaryTypes,
-          }),
-          // Default to Morocco food-related types if not specified
-          ...(!args.includedPrimaryTypes && {
-            includedPrimaryTypes: ["restaurant", "cafe", "bakery", "food"],
-          }),
-          // Location bias for relevant results
-          ...(args.locationBias && {
-            locationBias: {
-              circle: {
-                center: {
-                  latitude: args.locationBias.lat,
-                  longitude: args.locationBias.lng,
+            }),
+            ...(args.locationRestriction && {
+              locationRestriction: {
+                rectangle: {
+                  low: {
+                    latitude: args.locationRestriction.south,
+                    longitude: args.locationRestriction.west,
+                  },
+                  high: {
+                    latitude: args.locationRestriction.north,
+                    longitude: args.locationRestriction.east,
+                  },
                 },
-                radius: args.locationBias.radiusMeters ?? 50000, // 50km default for autocomplete
               },
+            }),
+          });
+        } else if (args.input && endpointClass === "autocomplete") {
+          url = buildPlacesApiUrl("places:autocomplete");
+          method = "POST";
+          body = JSON.stringify({
+            input: args.input,
+            languageCode: language,
+            regionCode: regionCode,
+            // Session token for cost bundling (autocomplete + place details = one charge)
+            ...(args.sessionToken && { sessionToken: args.sessionToken }),
+            // Filter to food-related place types
+            ...(args.includedPrimaryTypes && {
+              includedPrimaryTypes: args.includedPrimaryTypes,
+            }),
+            // Default to Morocco food-related types if not specified
+            ...(!args.includedPrimaryTypes && {
+              includedPrimaryTypes: ["restaurant", "cafe", "bakery", "food"],
+            }),
+            // Location bias for relevant results
+            ...(args.locationBias && {
+              locationBias: {
+                circle: {
+                  center: {
+                    latitude: args.locationBias.lat,
+                    longitude: args.locationBias.lng,
+                  },
+                  radius: args.locationBias.radiusMeters ?? 50000, // 50km default for autocomplete
+                },
+              },
+            }),
+          });
+        } else {
+          // This should never happen - parameter validation above should catch this
+          // If we get here, it's a bug in the validation logic
+          await decrementOnComplete();
+          return finalize({
+            success: false,
+            error: {
+              code: "INTERNAL_ERROR",
+              message: "Unexpected endpoint/parameter combination - this is a bug",
+              retryable: false,
             },
-          }),
-        });
-      } else {
-        // This should never happen - parameter validation above should catch this
-        // If we get here, it's a bug in the validation logic
-        return finalize({
-          success: false,
-          error: {
-            code: "INTERNAL_ERROR",
-            message: "Unexpected endpoint/parameter combination - this is a bug",
-            retryable: false,
-          },
-          metadata: {
-            requestId,
-            latencyMs: Date.now() - startTime,
-            costClass: "none",
-            fieldSet: fieldSetKey,
-            endpointClass,
-            cacheHit: false,
-          },
-        });
-      }
-
-      const response = await fetch(url, {
-        method,
-        headers,
-        body,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      const latencyMs = Date.now() - startTime;
-
-      // Record budget usage (don't await, fire and forget)
-      ctx.runMutation(internal.providerGateway.recordBudgetUsage, {
-        endpointClass,
-        cost: getMaxCost(fieldSetKey),
-      });
-
-      if (!response.ok) {
-        // Record circuit breaker failure for server errors
-        if (response.status >= 500 || response.status === 429) {
-          await ctx.runMutation(internal.providerGateway.recordCircuitFailure, {
-            service: "google_places",
+            metadata: {
+              requestId,
+              latencyMs: Date.now() - startTime,
+              costClass: "none",
+              fieldSet: fieldSetKey,
+              endpointClass,
+              cacheHit: false,
+            },
           });
         }
 
+        const response = await fetch(url, {
+          method,
+          headers,
+          body,
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        const latencyMs = Date.now() - startTime;
+
+        // Record budget usage (don't await, fire and forget)
+        ctx.runMutation(internal.providerGateway.recordBudgetUsage, {
+          endpointClass,
+          cost: getMaxCost(fieldSetKey),
+        });
+
+        if (!response.ok) {
+          // Record circuit breaker failure for server errors
+          if (response.status >= 500 || response.status === 429) {
+            await ctx.runMutation(internal.providerGateway.recordCircuitFailure, {
+              service: "google_places",
+            });
+          }
+
+          await decrementOnComplete();
+          return finalize({
+            success: false,
+            error: {
+              code: statusToErrorCode(response.status),
+              message: redactProviderContent(`Provider request failed with status ${response.status}`),
+              retryable: isRetryableError(response.status),
+            },
+            metadata: {
+              requestId,
+              latencyMs,
+              costClass: getCostTier(fieldSetKey),
+              fieldSet: fieldSetKey,
+              endpointClass,
+              cacheHit: false,
+            },
+          });
+        }
+
+        // Record circuit breaker success - this will close the circuit if in half-open
+        await ctx.runMutation(internal.providerGateway.recordCircuitSuccess, {
+          service: "google_places",
+        });
+
+        const data = await response.json();
+
+        // IMPORTANT: Never log the response data!
+        // Only return it to the caller
+
+        // =========================================================================
+        // Search Cache Write (text_search only)
+        // =========================================================================
+        // Cache placeKeys for future requests (policy-safe: IDs only, no content)
+        if (endpointClass === "text_search" && searchCacheKey) {
+          const placeKeys = extractPlaceKeysFromSearchResponse(data, "google");
+          if (placeKeys.length > 0) {
+            // Write cache asynchronously - don't block response
+            ctx.runMutation(internal.searchCache.writeSearchCache, {
+              cacheKey: searchCacheKey,
+              placeKeys,
+              provider: "google",
+            }).catch(() => {
+              // Ignore cache write failures - they're not critical
+            });
+          }
+        }
+
+        // Request completed successfully - decrement active count
+        await decrementOnComplete();
+
         return finalize({
-          success: false,
-          error: {
-            code: statusToErrorCode(response.status),
-            message: redactProviderContent(`Provider request failed with status ${response.status}`),
-            retryable: isRetryableError(response.status),
-          },
+          success: true,
+          data,
           metadata: {
             requestId,
             latencyMs,
@@ -1450,75 +2012,124 @@ export const providerRequest = internalAction({
             cacheHit: false,
           },
         });
+      } catch (error) {
+        clearTimeout(timeoutId);
+
+        const isAbort = error instanceof Error && error.name === "AbortError";
+
+        // Record circuit breaker failure for network errors and timeouts
+        await ctx.runMutation(internal.providerGateway.recordCircuitFailure, {
+          service: "google_places",
+        });
+
+        // Decrement active count even on error
+        await decrementOnComplete();
+
+        return finalize({
+          success: false,
+          error: {
+            code: isAbort ? "TIMEOUT" : "NETWORK_ERROR",
+            message: redactProviderContent(isAbort ? "Request timed out" : "Network error occurred"),
+            retryable: true,
+          },
+          metadata: {
+            requestId,
+            latencyMs: Date.now() - startTime,
+            costClass: getCostTier(fieldSetKey),
+            fieldSet: fieldSetKey,
+            endpointClass,
+            cacheHit: false,
+          },
+        });
       }
+    };
 
-      // Record circuit breaker success - this will close the circuit if in half-open
-      await ctx.runMutation(internal.providerGateway.recordCircuitSuccess, {
-        service: "google_places",
-      });
-
-      const data = await response.json();
-
-      // IMPORTANT: Never log the response data!
-      // Only return it to the caller
-
-      // =========================================================================
-      // Search Cache Write (text_search only)
-      // =========================================================================
-      // Cache placeKeys for future requests (policy-safe: IDs only, no content)
-      if (endpointClass === "text_search" && searchCacheKey) {
-        const placeKeys = extractPlaceKeysFromSearchResponse(data, "google");
-        if (placeKeys.length > 0) {
-          // Write cache asynchronously - don't block response
-          ctx.runMutation(internal.searchCache.writeSearchCache, {
-            cacheKey: searchCacheKey,
-            placeKeys,
-            provider: "google",
-          }).catch(() => {
-            // Ignore cache write failures - they're not critical
-          });
-        }
-      }
-
-      return finalize({
-        success: true,
-        data,
-        metadata: {
-          requestId,
-          latencyMs,
-          costClass: getCostTier(fieldSetKey),
-          fieldSet: fieldSetKey,
-          endpointClass,
-          cacheHit: false,
-        },
-      });
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      const isAbort = error instanceof Error && error.name === "AbortError";
-
-      // Record circuit breaker failure for network errors and timeouts
-      await ctx.runMutation(internal.providerGateway.recordCircuitFailure, {
-        service: "google_places",
-      });
-
-      return finalize({
-        success: false,
-        error: {
-          code: isAbort ? "TIMEOUT" : "NETWORK_ERROR",
-          message: redactProviderContent(isAbort ? "Request timed out" : "Network error occurred"),
-          retryable: true,
-        },
-        metadata: {
-          requestId,
-          latencyMs: Date.now() - startTime,
-          costClass: getCostTier(fieldSetKey),
-          fieldSet: fieldSetKey,
-          endpointClass,
-          cacheHit: false,
-        },
-      });
+    if (!singleflightKey) {
+      return await executeProviderCall();
     }
+
+    const { data: result, shared } = await singleflight(
+      singleflightKey,
+      executeProviderCall
+    );
+
+    if (shared) {
+      return withCallMetadata(result);
+    }
+
+    return result;
+  },
+});
+
+// ============================================================================
+// Public API for Load Monitoring
+// ============================================================================
+
+/**
+ * Get current load state (for UI display/debugging)
+ */
+export const getLoadState = query({
+  args: {},
+  handler: async (ctx): Promise<{
+    loadLevel: LoadLevel;
+    activeRequests: number;
+    maxConcurrent: number;
+    loadPercent: number;
+    queueDepths: Record<string, number>;
+    todayShedCounts: Record<string, number>;
+  }> => {
+    // Get active request count
+    const activeRecord = await ctx.db
+      .query("rateLimits")
+      .withIndex("by_key", (q) => q.eq("key", "load:active_requests"))
+      .first();
+
+    const activeRequests = activeRecord?.count ?? 0;
+    const maxConcurrent = LOAD_SHEDDING_CONFIG.maxConcurrentCalls;
+    const loadPercent = (activeRequests / maxConcurrent) * 100;
+
+    // Determine load level
+    let loadLevel: LoadLevel;
+    const loadRatio = activeRequests / maxConcurrent;
+    if (loadRatio >= LOAD_SHEDDING_CONFIG.loadLevels.critical) {
+      loadLevel = "critical";
+    } else if (loadRatio >= LOAD_SHEDDING_CONFIG.loadLevels.high) {
+      loadLevel = "high";
+    } else if (loadRatio >= LOAD_SHEDDING_CONFIG.loadLevels.elevated) {
+      loadLevel = "elevated";
+    } else {
+      loadLevel = "normal";
+    }
+
+    // Get queue depths
+    const queueDepths: Record<string, number> = {};
+    for (const priority of [1, 2, 3, 4] as PriorityClass[]) {
+      const queueRecord = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_key", (q) => q.eq("key", `load:queue:${priority}`))
+        .first();
+      queueDepths[`P${priority}`] = queueRecord?.count ?? 0;
+    }
+
+    // Get today's shed counts
+    const todayShedCounts: Record<string, number> = {};
+    const todayDate = new Date().toISOString().split('T')[0];
+    for (const priority of [1, 2, 3, 4] as PriorityClass[]) {
+      const shedRecord = await ctx.db
+        .query("rateLimits")
+        .withIndex("by_key", (q) => q.eq("key", `shed:${priority}:${todayDate}`))
+        .first();
+      todayShedCounts[`P${priority}`] = shedRecord?.count ?? 0;
+    }
+
+    return {
+      loadLevel,
+      activeRequests,
+      maxConcurrent,
+      loadPercent,
+      queueDepths,
+      todayShedCounts,
+    };
   },
 });
 

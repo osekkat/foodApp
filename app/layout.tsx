@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, IBM_Plex_Sans_Arabic } from "next/font/google";
 import "./globals.css";
 import { ConvexClientProvider } from "./ConvexClientProvider";
 import { I18nProvider } from "@/lib/i18n";
+import { ServiceModeProvider } from "@/components/providers/ServiceModeProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -61,7 +62,9 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${ibmPlexArabic.variable} antialiased`}
       >
         <ConvexClientProvider>
-          <I18nProvider>{children}</I18nProvider>
+          <I18nProvider>
+            <ServiceModeProvider>{children}</ServiceModeProvider>
+          </I18nProvider>
         </ConvexClientProvider>
       </body>
     </html>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import {
   SearchSessionManager,
   type AutocompleteResult,
@@ -44,12 +46,25 @@ export interface UseSearchResult {
   isLoading: boolean;
   /** Error message if any */
   error: string | null;
+  /** Whether we're in a degraded state (e.g., load shedding) */
+  isDegraded: boolean;
   /** Select a place from suggestions (completes session) */
   selectPlace: (placeId: string) => Promise<void>;
   /** Clear search and reset state */
   clear: () => void;
   /** Whether autocomplete is enabled based on query length */
   isAutocompleteEnabled: boolean;
+}
+
+interface AutocompleteResponse {
+  suggestions: Array<{
+    placePrediction: {
+      placeId: string;
+      text: { text: string; matches?: { startOffset: number; endOffset: number }[] };
+      structuredFormat: { mainText: { text: string }; secondaryText?: { text: string } };
+      types: string[];
+    };
+  }>;
 }
 
 /**
@@ -89,6 +104,10 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
   const [suggestions, setSuggestions] = useState<AutocompleteResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDegraded, setIsDegraded] = useState(false);
+
+  // Convex action for autocomplete
+  const autocomplete = useAction(api.places.autocomplete);
 
   // Session manager for token lifecycle
   const sessionManagerRef = useRef<SearchSessionManager | null>(null);
@@ -127,25 +146,50 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
         // Get abort signal to cancel any previous request
         const signal = sessionManager.getAbortSignal();
 
-        // TODO: Replace with actual Convex action call when public action is created
-        // For now, this is a placeholder that shows the intended structure
-        // const result = await autocomplete({
-        //   fieldSet: "AUTOCOMPLETE",
-        //   endpointClass: "autocomplete",
-        //   input: searchQuery,
-        //   sessionToken: sessionManager.getToken(),
-        //   language,
-        //   ...(locationBias && { locationBias }),
-        //   ...(includedPrimaryTypes && { includedPrimaryTypes }),
-        // });
+        // Perform the autocomplete request via Convex action
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result: any = await autocomplete({
+          input: searchQuery,
+          sessionToken: sessionManager.getToken(),
+          language,
+          locationBias,
+          includedPrimaryTypes,
+        });
 
         // Check if this request was superseded by a newer one
         if (signal.aborted || thisRequestId !== requestCounterRef.current) {
           return;
         }
 
-        // Mock empty response - replace with actual API call
-        setSuggestions([]);
+        if (result.success && result.data) {
+          const data = result.data as AutocompleteResponse;
+          setSuggestions(
+            data.suggestions.map((s) => ({
+              placeId: s.placePrediction.placeId,
+              text: s.placePrediction.text,
+              structuredFormat: s.placePrediction.structuredFormat,
+              types: s.placePrediction.types,
+            }))
+          );
+          // Clear degraded state on success
+          setIsDegraded(false);
+        } else {
+          // Only update error if this is still the current request
+          if (thisRequestId === requestCounterRef.current) {
+            const errorCode = result.error?.code;
+
+            // Handle load shedding gracefully
+            if (errorCode === "LOAD_SHED") {
+              setIsDegraded(true);
+              setError("Search temporarily limited due to high demand. Please try again.");
+              // Keep existing suggestions if any (graceful degradation)
+              // setSuggestions([]); - Don't clear existing suggestions
+            } else {
+              setError(result.error?.message || "Search failed");
+              setSuggestions([]);
+            }
+          }
+        }
       } catch (err) {
         // Don't show error if request was aborted (user typed more)
         if (err instanceof Error && err.name === "AbortError") {
@@ -163,7 +207,7 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
         }
       }
     },
-    [language, locationBias, includedPrimaryTypes]
+    [autocomplete, language, locationBias, includedPrimaryTypes]
   );
 
   /**
@@ -219,6 +263,7 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
     setSuggestions([]);
     setError(null);
     setIsLoading(false);
+    setIsDegraded(false);
 
     // Clear debounce timer
     if (debounceTimerRef.current) {
@@ -244,6 +289,7 @@ export function useSearch(options: UseSearchOptions = {}): UseSearchResult {
     suggestions,
     isLoading,
     error,
+    isDegraded,
     selectPlace,
     clear,
     isAutocompleteEnabled: query.length >= minQueryLength,

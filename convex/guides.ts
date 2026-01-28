@@ -11,7 +11,7 @@
  * POLICY: All content is owned. No provider data stored here.
  */
 
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 import { requireRole, logAction, getAuthUser } from "./auth/rbac";
 import type { Id, Doc } from "./_generated/dataModel";
@@ -640,5 +640,70 @@ export const getStats = query({
       byCity,
       byLocale,
     };
+  },
+});
+
+// ============================================================================
+// Internal Mutations (for seeding/migration)
+// ============================================================================
+
+/**
+ * Update guide image (internal only, for fixing broken images)
+ */
+export const updateGuideImage = internalMutation({
+  args: {
+    slug: v.string(),
+    coverImageUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const guide = await ctx.db
+      .query("guides")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .first();
+
+    if (guide) {
+      await ctx.db.patch(guide._id, { coverImageUrl: args.coverImageUrl });
+      return guide._id;
+    }
+    return null;
+  },
+});
+
+/**
+ * Seed a guide (internal only, bypasses auth)
+ */
+export const seedGuide = internalMutation({
+  args: {
+    title: v.string(),
+    slug: v.string(),
+    description: v.string(),
+    coverImageUrl: v.string(),
+    city: v.optional(v.string()),
+    placeKeys: v.array(v.string()),
+    locale: v.union(v.literal("ar"), v.literal("fr"), v.literal("en")),
+    featured: v.boolean(),
+    sortOrder: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Check if already exists
+    const existing = await ctx.db
+      .query("guides")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .first();
+
+    if (existing) {
+      return existing._id;
+    }
+
+    const searchableText = [args.title, args.description, args.city]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return ctx.db.insert("guides", {
+      ...args,
+      publishedAt: Date.now(),
+      searchableText,
+    });
   },
 });

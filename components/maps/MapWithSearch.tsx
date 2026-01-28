@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useMapSearch } from "@/hooks/useMapSearch";
-import { MapView, type MapBounds, type PlaceMarkerData } from "./";
+import { MapView, type PlaceMarkerData } from "./";
 import { SearchThisAreaButton } from "@/components/search";
 
 export interface MapWithSearchProps {

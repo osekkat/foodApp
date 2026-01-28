@@ -13,7 +13,7 @@
  * 4. If miss, caller performs search, then writes placeKeys to cache
  */
 
-import { internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
+import { internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 
 // ============================================================================
