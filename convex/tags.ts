@@ -77,7 +77,8 @@ async function getAuthUser(ctx: any) {
 
   const user = await ctx.db
     .query("users")
-    .withIndex("by_email", (q) => q.eq("email", identity.email))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .withIndex("by_email", (q: any) => q.eq("email", identity.email))
     .first();
 
   return user;

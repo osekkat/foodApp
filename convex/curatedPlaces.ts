@@ -72,7 +72,8 @@ async function requireEditor(ctx: any) {
 
   const user = await ctx.db
     .query("users")
-    .withIndex("by_token", (q) => q.eq("tokenIdentifier", tokenIdentifier))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .withIndex("by_token", (q: any) => q.eq("tokenIdentifier", tokenIdentifier))
     .first();
 
   if (!user) {
@@ -82,7 +83,8 @@ async function requireEditor(ctx: any) {
   // Check role from userRoles table (admin or editor can manage curated content)
   const userRoles = await ctx.db
     .query("userRoles")
-    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .withIndex("by_user", (q: any) => q.eq("userId", user._id))
     .collect();
 
   const hasEditorAccess = userRoles.some(
