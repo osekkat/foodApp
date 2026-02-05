@@ -125,9 +125,12 @@ export function I18nProvider({ children, initialLocale }: I18nProviderProps) {
   useEffect(() => {
     if (!initialLocale) {
       const cookieLocale = getLocaleFromCookie();
-      setLocaleState(cookieLocale);
+      if (cookieLocale !== locale) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLocaleState(cookieLocale);
+      }
     }
-  }, [initialLocale]);
+  }, [initialLocale, locale]);
 
   // Update document direction when locale changes
   useEffect(() => {

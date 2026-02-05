@@ -138,7 +138,7 @@ function expandForSearch(text: string): string {
 function normalizeQuery(query: string): string {
   if (!query) return "";
 
-  let normalized = normalizeArabic(query.toLowerCase());
+  const normalized = normalizeArabic(query.toLowerCase());
   const words = normalized.split(/\s+/);
   const normalizedWords = words.map((word) => {
     const canonical = VARIANT_TO_CANONICAL.get(word);

@@ -2,7 +2,7 @@
 
 import { useQuery, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -66,6 +66,17 @@ export function PlaceDetails({
   const inFlightRef = useRef(false);
   const mountedRef = useRef(true);
 
+  // Reset provider state when googlePlaceId changes
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    requestIdRef.current += 1;
+    inFlightRef.current = false;
+    setProviderData(null);
+    setProviderError(null);
+    setProviderLoading(false);
+  }, [googlePlaceId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   // Fetch owned data from Convex
   const communityData = useQuery(api.placeDetails.getPlaceCommunityData, {
     placeKey,
@@ -86,15 +97,6 @@ export function PlaceDetails({
   // Action to fetch provider data
   const fetchProviderDetails = useAction(api.placeDetails.fetchProviderDetails);
 
-  // Reset provider state when switching places
-  useEffect(() => {
-    requestIdRef.current += 1;
-    inFlightRef.current = false;
-    setProviderData(null);
-    setProviderError(null);
-    setProviderLoading(false);
-  }, [googlePlaceId]);
-
   // Track mounted state to avoid setState after unmount
   useEffect(() => {
     mountedRef.current = true;
@@ -103,37 +105,44 @@ export function PlaceDetails({
     };
   }, []);
 
-  // Fetch provider data on mount (only for provider places)
-  useEffect(() => {
-    if (googlePlaceId && !providerMatches && !providerError && !inFlightRef.current) {
-      const requestId = ++requestIdRef.current;
-      inFlightRef.current = true;
-      setProviderLoading(true);
-
-      fetchProviderDetails({
-        googlePlaceId,
-        includePhotos: photosEnabled,
-      })
-        .then((result) => {
-          if (!mountedRef.current || requestIdRef.current !== requestId) return;
-          if (result.success && result.data) {
-            setProviderError(null);
-            setProviderData(result.data);
-          } else {
-            setProviderError(result.error?.message || "Failed to load place details");
-          }
-        })
-        .catch((err) => {
-          if (!mountedRef.current || requestIdRef.current !== requestId) return;
-          setProviderError(err.message || "Failed to load place details");
-        })
-        .finally(() => {
-          if (!mountedRef.current || requestIdRef.current !== requestId) return;
-          inFlightRef.current = false;
-          setProviderLoading(false);
-        });
+  // Fetch function wrapped in useCallback
+  const doFetch = useCallback(() => {
+    if (!googlePlaceId || providerMatches || providerError || inFlightRef.current) {
+      return;
     }
+    const requestId = ++requestIdRef.current;
+    inFlightRef.current = true;
+    setProviderLoading(true);
+
+    fetchProviderDetails({
+      googlePlaceId,
+      includePhotos: photosEnabled,
+    })
+      .then((result) => {
+        if (!mountedRef.current || requestIdRef.current !== requestId) return;
+        if (result.success && result.data) {
+          setProviderError(null);
+          setProviderData(result.data);
+        } else {
+          setProviderError(result.error?.message || "Failed to load place details");
+        }
+      })
+      .catch((err) => {
+        if (!mountedRef.current || requestIdRef.current !== requestId) return;
+        setProviderError(err.message || "Failed to load place details");
+      })
+      .finally(() => {
+        if (!mountedRef.current || requestIdRef.current !== requestId) return;
+        inFlightRef.current = false;
+        setProviderLoading(false);
+      });
   }, [googlePlaceId, providerMatches, providerError, fetchProviderDetails, photosEnabled]);
+
+  // Trigger fetch on mount/deps change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    doFetch();
+  }, [doFetch]);
 
   // Derive display data from provider or curated
   const displayName =

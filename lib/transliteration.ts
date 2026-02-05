@@ -260,7 +260,7 @@ export function normalizeQuery(query: string): string {
   if (!query) return "";
 
   // First, normalize Arabic text
-  let normalized = normalizeArabic(query.toLowerCase());
+  const normalized = normalizeArabic(query.toLowerCase());
 
   // Split into words for term-by-term normalization
   const words = normalized.split(/\s+/);

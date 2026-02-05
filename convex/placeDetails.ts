@@ -104,7 +104,7 @@ export const getPlaceReviews = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 10;
 
-    let reviewsQuery = ctx.db
+    const reviewsQuery = ctx.db
       .query("reviews")
       .withIndex("by_place_recent", (q) => q.eq("placeKey", args.placeKey))
       .order("desc");

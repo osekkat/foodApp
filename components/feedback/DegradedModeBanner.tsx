@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, X } from "lucide-react";
 import type { ServiceModeState } from "@/convex/serviceMode";
@@ -16,12 +16,9 @@ function getMessage(mode: ServiceModeState): string {
   return "Some features are limited right now.";
 }
 
-export function DegradedModeBanner({ mode }: DegradedModeBannerProps) {
+// Inner component that manages dismissed state
+function DegradedModeBannerInner({ mode }: DegradedModeBannerProps) {
   const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    setDismissed(false);
-  }, [mode.currentMode]);
 
   if (dismissed) return null;
 
@@ -55,4 +52,10 @@ export function DegradedModeBanner({ mode }: DegradedModeBannerProps) {
       </div>
     </div>
   );
+}
+
+// Wrapper that uses key to reset state when mode changes
+export function DegradedModeBanner({ mode }: DegradedModeBannerProps) {
+  // Using mode.currentMode as key resets the inner component's state when mode changes
+  return <DegradedModeBannerInner key={mode.currentMode} mode={mode} />;
 }

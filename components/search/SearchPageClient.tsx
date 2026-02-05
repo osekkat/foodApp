@@ -81,7 +81,9 @@ export function SearchPageClient({ city, initialQuery = "" }: SearchPageClientPr
   useEffect(() => {
     const urlQuery = searchParams.get("q") || "";
     if (urlQuery !== activeQuery) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveQuery(urlQuery);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuery(urlQuery);
     }
   }, [searchParams, setQuery, activeQuery]);
@@ -104,6 +106,18 @@ export function SearchPageClient({ city, initialQuery = "" }: SearchPageClientPr
 
     return () => clearTimeout(timeoutId);
   }, [query, activeQuery, router, searchParams]);
+
+  // Handle selecting a suggestion (defined before handleKeyDown which uses it)
+  const handleSelectSuggestion = useCallback(
+    async (placeId: string) => {
+      await selectPlace(placeId);
+      setIsInputFocused(false);
+      setSelectedIndex(-1);
+      // Navigate to place detail page
+      router.push(`/place/g/${placeId}`);
+    },
+    [selectPlace, router]
+  );
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback(
@@ -136,19 +150,7 @@ export function SearchPageClient({ city, initialQuery = "" }: SearchPageClientPr
           break;
       }
     },
-    [isInputFocused, suggestions, selectedIndex]
-  );
-
-  // Handle selecting a suggestion
-  const handleSelectSuggestion = useCallback(
-    async (placeId: string) => {
-      await selectPlace(placeId);
-      setIsInputFocused(false);
-      setSelectedIndex(-1);
-      // Navigate to place detail page
-      router.push(`/place/g/${placeId}`);
-    },
-    [selectPlace, router]
+    [isInputFocused, suggestions, selectedIndex, handleSelectSuggestion]
   );
 
   // Handle selecting a popular/recent search

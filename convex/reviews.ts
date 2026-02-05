@@ -508,7 +508,7 @@ async function updatePlaceAggregates(
       : undefined;
 
   // Find or create place record
-  let place = await ctx.db
+  const place = await ctx.db
     .query("places")
     .withIndex("by_placeKey", (q) => q.eq("placeKey", placeKey))
     .first();
