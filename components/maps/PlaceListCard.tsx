@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { MapPin, Star, Clock, Phone, Navigation } from "lucide-react";
+import { MapPin, Star, Clock, Navigation } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn, parsePlaceKey } from "@/lib/utils";
@@ -297,19 +297,6 @@ export function PlaceListCard({
           >
             <Navigation className="mr-1.5 h-3.5 w-3.5" />
             Get Directions
-          </Button>
-          {/* Phone button if we had phone data */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs text-green-600 hover:bg-green-50 hover:text-green-700 dark:text-green-500 dark:hover:bg-green-900/20 dark:hover:text-green-400"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              // Would trigger phone call
-            }}
-          >
-            <Phone className="h-3.5 w-3.5" />
           </Button>
         </div>
       </Link>

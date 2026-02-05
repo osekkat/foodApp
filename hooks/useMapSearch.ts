@@ -208,10 +208,8 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
   /**
    * Perform bounded search
    *
-   * When tile caching is enabled:
-   * 1. Uses cached placeKeys for already-fetched tiles
-   * 2. Only fetches from provider for uncached tiles
-   * 3. Writes new results to tile cache
+   * Fetches places from provider for the current viewport bounds.
+   * If tile caching is enabled, writes results to cache for future use.
    */
   const searchArea = useCallback(
     async (query?: string) => {
@@ -227,27 +225,6 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         setError(null);
         setShowSearchButton(false);
 
-        // Collect results: start with cached placeKeys
-        const allResults: MapSearchResult[] = [];
-        const seenPlaceKeys = new Set<string>();
-
-        // Add cached placeKeys if tile caching is enabled
-        if (useTileCache) {
-          for (const key of tileCache.cachedPlaceKeys) {
-            if (!seenPlaceKeys.has(key)) {
-              seenPlaceKeys.add(key);
-              // For cached keys, we only have the key - display name will come from details
-              allResults.push({
-                placeKey: key,
-                placeId: key.replace(/^g:/, ""),
-                displayName: "",
-                location: { lat: 0, lng: 0 },
-              });
-            }
-          }
-        }
-
-        // Fetch from provider using the textSearch action
         // Check if request was aborted
         if (abortControllerRef.current.signal.aborted) {
           return;
@@ -277,23 +254,19 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
           return;
         }
 
-        // Add results from provider
-        for (const place of result.places) {
-          if (!seenPlaceKeys.has(place.placeKey)) {
-            seenPlaceKeys.add(place.placeKey);
-            allResults.push({
-              placeKey: place.placeKey,
-              placeId: place.placeId,
-              displayName: place.displayName,
-              location: place.location,
-              primaryType: place.primaryType,
-              rating: place.rating,
-              userRatingCount: place.userRatingCount,
-              priceLevel: place.priceLevel,
-              formattedAddress: place.formattedAddress,
-            });
-          }
-        }
+        // Transform results from provider
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const searchResultPlaces: MapSearchResult[] = result.places.map((place: any) => ({
+          placeKey: place.placeKey,
+          placeId: place.placeId,
+          displayName: place.displayName,
+          location: place.location,
+          primaryType: place.primaryType,
+          rating: place.rating,
+          userRatingCount: place.userRatingCount,
+          priceLevel: place.priceLevel,
+          formattedAddress: place.formattedAddress,
+        }));
 
         // Write to tile cache for future use (if tile caching is enabled)
         if (useTileCache && result.places.length > 0) {
@@ -311,7 +284,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
           }
         }
 
-        setResults(allResults);
+        setResults(searchResultPlaces);
         setLastSearchedBounds(pendingBounds);
         setPendingBounds(null);
 
@@ -346,7 +319,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         setIsLoading(false);
       }
     },
-    [pendingBounds, cooldownRemaining, cooldownMs, useTileCache, tileCache, zoom, writeTileCacheMutation]
+    [pendingBounds, cooldownRemaining, cooldownMs, useTileCache, zoom, writeTileCacheMutation, defaultQuery, language, textSearchAction]
   );
 
   /**
