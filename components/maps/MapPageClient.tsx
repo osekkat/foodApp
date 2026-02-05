@@ -121,7 +121,7 @@ export function MapPageClient({
     limit: 20,
   });
 
-  // Convert search results to sidebar format
+  // Convert search results to sidebar format with indices
   const sidebarPlaces = useMemo<PlaceListItemData[]>(() => {
     const places: PlaceListItemData[] = [];
 
@@ -160,6 +160,13 @@ export function MapPageClient({
         ? _formatPriceLevel(result.priceLevel)
         : undefined;
 
+      // Build photo URL from photo reference (via our photo proxy)
+      // URL format: /api/photos/{placeId}/{photoRef}?size=medium
+      let photoUrl: string | undefined;
+      if (result.photoReference && result.placeId) {
+        photoUrl = `/api/photos/${encodeURIComponent(result.placeId)}/${encodeURIComponent(result.photoReference)}?size=medium`;
+      }
+
       places.push({
         placeKey: result.placeKey,
         name: result.displayName || "Unknown Place",
@@ -169,13 +176,18 @@ export function MapPageClient({
         providerReviewCount: result.userRatingCount,
         priceLevel,
         address: result.formattedAddress,
+        photoUrl,
       });
     }
 
-    return places;
+    // Add 1-based index to each place
+    return places.map((place, idx) => ({
+      ...place,
+      index: idx + 1,
+    }));
   }, [curatedPlaces, searchResults]);
 
-  // Convert to map marker format
+  // Convert to map marker format (indices already set in sidebarPlaces)
   const mapPlaces = useMemo<PlaceMarkerData[]>(() => {
     return sidebarPlaces
       .filter((p) => p.location.lat !== 0 && p.location.lng !== 0)
@@ -186,6 +198,7 @@ export function MapPageClient({
         placeType: p.placeType,
         rating: p.providerRating,
         isCurated: p.isCurated,
+        index: p.index, // Already set with 1-based index matching sidebar order
       }));
   }, [sidebarPlaces]);
 
@@ -287,10 +300,11 @@ export function MapPageClient({
           zoom={mapZoom}
           onBoundsChange={handleBoundsChange}
           onPlaceClick={handleMapMarkerClick}
-          enableClustering={mapPlaces.length > 20}
+          enableClustering={mapPlaces.length > 50}
           className="h-full w-full"
           highlightedPlaceKey={hoveredPlaceKey}
           selectedPlaceKey={selectedPlaceKey}
+          showIndices={true}
         />
 
         {/* Map overlay controls */}

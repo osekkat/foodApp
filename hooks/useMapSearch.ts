@@ -34,6 +34,8 @@ export interface MapSearchResult {
   priceLevel?: string;
   /** Formatted address */
   formattedAddress?: string;
+  /** Photo reference for building photo proxy URL (policy-safe: reference only) */
+  photoReference?: string;
 }
 
 export interface UseMapSearchOptions {
@@ -261,6 +263,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
           userRatingCount: place.userRatingCount,
           priceLevel: place.priceLevel,
           formattedAddress: place.formattedAddress,
+          photoReference: place.photoReference,
         }));
 
         // Write to tile cache for future use (if tile caching is enabled)

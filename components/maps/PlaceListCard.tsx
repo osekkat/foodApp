@@ -163,6 +163,7 @@ export function PlaceListCard({
                   fill
                   sizes="(min-width: 640px) 112px, 96px"
                   className="object-cover"
+                  unoptimized={place.photoUrl.startsWith("/api/photos/")}
                 />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">

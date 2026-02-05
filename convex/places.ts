@@ -67,6 +67,8 @@ export const textSearch = action({
       userRatingCount?: number;
       priceLevel?: string;
       formattedAddress?: string;
+      /** First photo reference for thumbnails (policy-safe: reference only, not content) */
+      photoReference?: string;
     }>;
     error?: string;
   }> => {
@@ -100,6 +102,22 @@ export const textSearch = action({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const places = rawPlaces.map((place: any) => {
       const placeId = place.id ?? place.name?.split("/").pop() ?? "";
+      
+      // Extract first photo reference (policy-safe: we only store the reference, not the photo)
+      // Google Places API (New) returns photos as: { name: "places/{placeId}/photos/{photoRef}", ... }
+      let photoReference: string | undefined;
+      if (place.photos && place.photos.length > 0) {
+        const photoName = place.photos[0]?.name;
+        if (photoName) {
+          // Extract photo reference from the name field
+          // Format: "places/{placeId}/photos/{photoReference}"
+          const parts = photoName.split("/photos/");
+          if (parts.length === 2) {
+            photoReference = parts[1];
+          }
+        }
+      }
+      
       return {
         placeKey: `g:${placeId}`,
         placeId,
@@ -113,6 +131,7 @@ export const textSearch = action({
         userRatingCount: place.userRatingCount,
         priceLevel: place.priceLevel,
         formattedAddress: place.formattedAddress,
+        photoReference,
       };
     });
 

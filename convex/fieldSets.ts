@@ -133,12 +133,13 @@ export const FIELD_SETS = {
   /**
    * Text search - for query-based searches
    * Use case: Search bar queries
+   * Includes photos for search result cards
    */
   TEXT_SEARCH: {
-    mask: "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.priceLevel",
-    costTier: "advanced" as CostTier,
-    description: "Search results with ratings",
-    maxCostPerCall: 10,
+    mask: "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.priceLevel,places.primaryType,places.photos",
+    costTier: "preferred" as CostTier,
+    description: "Search results with ratings and photos",
+    maxCostPerCall: 17,
   },
 
   /**

@@ -188,6 +188,13 @@ const nextConfig: NextConfig = {
         hostname: "images.unsplash.com",
       },
     ],
+    // Local patterns for photo proxy with query strings
+    localPatterns: [
+      {
+        pathname: "/api/photos/**",
+        search: "?size=*",
+      },
+    ],
   },
 
   // React Compiler is now a top-level option in Next.js 16

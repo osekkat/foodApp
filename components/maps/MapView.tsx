@@ -87,6 +87,8 @@ export interface MapViewProps {
   highlightedPlaceKey?: string | null;
   /** Place key that is currently selected */
   selectedPlaceKey?: string | null;
+  /** Whether to show index numbers on markers (1, 2, 3...) */
+  showIndices?: boolean;
 }
 
 /**
@@ -114,6 +116,7 @@ export function MapView({
   className,
   highlightedPlaceKey,
   selectedPlaceKey,
+  showIndices = false,
 }: MapViewProps) {
   const mapRef = useRef<google.maps.Map | null>(null);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
@@ -192,10 +195,11 @@ export function MapView({
           clusterer={clusterer}
           isHighlighted={highlightedPlaceKey === place.placeKey}
           isSelected={selectedPlaceKey === place.placeKey}
+          showIndex={showIndices}
         />
       ));
     },
-    [places, handleMarkerClick, highlightedPlaceKey, selectedPlaceKey]
+    [places, handleMarkerClick, highlightedPlaceKey, selectedPlaceKey, showIndices]
   );
 
   return (

@@ -23,6 +23,8 @@ export interface PlaceMarkerData {
   rating?: number;
   /** Whether this place is a curated/featured place */
   isCurated?: boolean;
+  /** Optional index number to display on the marker (1-based) */
+  index?: number;
 }
 
 interface PlaceMarkerProps {
@@ -33,6 +35,8 @@ interface PlaceMarkerProps {
   isHighlighted?: boolean;
   /** Whether this marker is selected */
   isSelected?: boolean;
+  /** Whether to show index numbers on markers */
+  showIndex?: boolean;
 }
 
 /**
@@ -53,13 +57,47 @@ const HIGHLIGHT_COLOR = "#F97316"; // Orange for highlighted (sidebar hover)
 const SELECTED_COLOR = "#6B46C1"; // Purple for selected
 
 /**
+ * Generate an SVG data URL for a numbered marker
+ */
+function createNumberedMarkerSvg(
+  number: number,
+  fillColor: string,
+  strokeColor: string = "#ffffff",
+  strokeWidth: number = 2,
+  size: number = 32
+): string {
+  // Adjust font size based on number of digits
+  const fontSize = number > 99 ? 11 : number > 9 ? 13 : 14;
+  
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - strokeWidth}" 
+        fill="${fillColor}" 
+        stroke="${strokeColor}" 
+        stroke-width="${strokeWidth}"/>
+      <text x="${size / 2}" y="${size / 2}" 
+        text-anchor="middle" 
+        dominant-baseline="central" 
+        fill="${strokeColor}" 
+        font-family="system-ui, -apple-system, sans-serif" 
+        font-weight="600" 
+        font-size="${fontSize}px">${number}</text>
+    </svg>
+  `.trim();
+
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+/**
  * Get marker icon configuration based on place data and state
+ * Returns either a Symbol (for non-numbered) or Icon (for numbered markers)
  */
 function getMarkerIcon(
   place: PlaceMarkerData,
   isHighlighted?: boolean,
-  isSelected?: boolean
-): google.maps.Symbol {
+  isSelected?: boolean,
+  showIndex?: boolean
+): google.maps.Symbol | google.maps.Icon {
   // Determine color based on state
   let color: string;
   if (isSelected) {
@@ -74,6 +112,19 @@ function getMarkerIcon(
   let scale = place.isCurated ? 1.2 : 1;
   if (isHighlighted) scale *= 1.3;
   if (isSelected) scale *= 1.4;
+
+  // If showing index and we have one, use numbered marker
+  if (showIndex && place.index !== undefined && place.index > 0) {
+    const baseSize = 28;
+    const size = Math.round(baseSize * scale);
+    const strokeWeight = isSelected ? 3 : isHighlighted ? 2.5 : 2;
+    
+    return {
+      url: createNumberedMarkerSvg(place.index, color, "#ffffff", strokeWeight, size),
+      scaledSize: new google.maps.Size(size, size),
+      anchor: new google.maps.Point(size / 2, size / 2),
+    };
+  }
 
   // Stroke weight increases for highlighted/selected
   const strokeWeight = isSelected ? 3 : isHighlighted ? 2.5 : 2;
@@ -99,6 +150,7 @@ function getMarkerIcon(
  * - Clusterable for performance
  * - Highlight state for sidebar hover sync
  * - Selected state for current selection
+ * - Optional numbered labels (1, 2, 3...) matching sidebar order
  */
 export function PlaceMarker({
   place,
@@ -106,6 +158,7 @@ export function PlaceMarker({
   clusterer,
   isHighlighted = false,
   isSelected = false,
+  showIndex = false,
 }: PlaceMarkerProps) {
   const position = useMemo(
     () => ({
@@ -116,8 +169,8 @@ export function PlaceMarker({
   );
 
   const icon = useMemo(
-    () => getMarkerIcon(place, isHighlighted, isSelected),
-    [place, isHighlighted, isSelected]
+    () => getMarkerIcon(place, isHighlighted, isSelected, showIndex),
+    [place, isHighlighted, isSelected, showIndex]
   );
 
   const handleClick = useCallback(() => {
