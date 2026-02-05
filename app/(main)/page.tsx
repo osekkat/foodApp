@@ -32,7 +32,7 @@ export default function HomePage() {
               </Link>
               <Link
                 href="/signin"
-                className="rounded-full bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700"
+                className="rounded-full bg-orange-700 px-4 py-2 text-sm font-medium text-white hover:bg-orange-800"
               >
                 Sign In
               </Link>

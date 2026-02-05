@@ -66,6 +66,7 @@ export function SearchInput({
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           className="h-12 pl-12 pr-12 text-lg rounded-xl border-zinc-200 bg-white focus:border-orange-500 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-800"
+          role="combobox"
           aria-label="Search"
           aria-expanded={showDropdown ? "true" : "false"}
           aria-haspopup="listbox"

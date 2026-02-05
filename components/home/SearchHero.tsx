@@ -42,6 +42,7 @@ export function SearchHero() {
           <button
             type="submit"
             className="absolute end-2 top-1/2 -translate-y-1/2 rounded-full bg-orange-600 p-3 text-white hover:bg-orange-700 transition-colors"
+            aria-label="Search"
           >
             <Search className="size-5" />
           </button>
