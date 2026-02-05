@@ -34,8 +34,8 @@ export interface MapSearchResult {
   priceLevel?: string;
   /** Formatted address */
   formattedAddress?: string;
-  /** Photo reference for building photo proxy URL (policy-safe: reference only) */
-  photoReference?: string;
+  /** Photo URL (signed) for building photo proxy URL (policy-safe: reference only) */
+  photoUrl?: string;
 }
 
 export interface UseMapSearchOptions {
@@ -220,7 +220,8 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
 
       // Cancel any pending request
       abortControllerRef.current?.abort();
-      abortControllerRef.current = new AbortController();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
       try {
         setIsLoading(true);
@@ -241,7 +242,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         });
 
         // Check if request was aborted
-        if (abortControllerRef.current.signal.aborted) {
+        if (controller.signal.aborted) {
           return;
         }
 
@@ -263,7 +264,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
           userRatingCount: place.userRatingCount,
           priceLevel: place.priceLevel,
           formattedAddress: place.formattedAddress,
-          photoReference: place.photoReference,
+          photoUrl: place.photoUrl,
         }));
 
         // Write to tile cache for future use (if tile caching is enabled)

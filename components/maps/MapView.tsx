@@ -30,35 +30,11 @@ const containerStyle = {
 /**
  * Cluster options for marker clustering
  * - Enable clustering when 3+ markers are nearby
- * - Custom cluster styling
  */
 const CLUSTER_OPTIONS = {
   minimumClusterSize: 3,
   maxZoom: 15,
   gridSize: 60,
-  styles: [
-    {
-      textColor: "#ffffff",
-      url: "", // Will use default, can customize
-      height: 40,
-      width: 40,
-      textSize: 12,
-    },
-    {
-      textColor: "#ffffff",
-      url: "",
-      height: 50,
-      width: 50,
-      textSize: 14,
-    },
-    {
-      textColor: "#ffffff",
-      url: "",
-      height: 60,
-      width: 60,
-      textSize: 16,
-    },
-  ],
 };
 
 export interface MapBounds {

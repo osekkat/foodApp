@@ -118,12 +118,6 @@ export function PlaceListSidebar({
     []
   );
 
-  // Add index to places for numbered display
-  const indexedPlaces = places.map((place, idx) => ({
-    ...place,
-    index: idx + 1,
-  }));
-
   return (
     <div
       className={cn(
@@ -235,7 +229,7 @@ export function PlaceListSidebar({
             </div>
           ) : (
             // Place list
-            indexedPlaces.map((place) => (
+            places.map((place) => (
               <div key={place.placeKey} ref={setCardRef(place.placeKey)}>
                 <PlaceListCard
                   place={place}

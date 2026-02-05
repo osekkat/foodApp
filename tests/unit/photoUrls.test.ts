@@ -29,7 +29,7 @@ describe("photoUrls", () => {
     it("should generate a signed URL with correct format", async () => {
       const { generateSignedPhotoUrl } = await import("@/lib/photoUrls");
 
-      const url = generateSignedPhotoUrl(
+      const url = await generateSignedPhotoUrl(
         "test-place-id",
         "test-photo-ref",
         "medium",
@@ -47,7 +47,7 @@ describe("photoUrls", () => {
     it("should default to medium size", async () => {
       const { generateSignedPhotoUrl } = await import("@/lib/photoUrls");
 
-      const url = generateSignedPhotoUrl("place", "photo");
+      const url = await generateSignedPhotoUrl("place", "photo");
       expect(url).toContain("size=medium");
     });
   });
@@ -58,7 +58,7 @@ describe("photoUrls", () => {
         "@/lib/photoUrls"
       );
 
-      const url = generateSignedPhotoUrl(
+      const url = await generateSignedPhotoUrl(
         "test-place",
         "test-photo",
         "medium",
@@ -72,7 +72,7 @@ describe("photoUrls", () => {
       const placeId = decodeURIComponent(pathParts[3]);
       const photoRef = decodeURIComponent(pathParts[4]);
 
-      const result = verifySignature(
+      const result = await verifySignature(
         placeId,
         photoRef,
         params.get("size")!,
@@ -86,7 +86,7 @@ describe("photoUrls", () => {
     it("should reject an invalid signature", async () => {
       const { verifySignature } = await import("@/lib/photoUrls");
 
-      const result = verifySignature(
+      const result = await verifySignature(
         "place",
         "photo",
         "medium",
@@ -102,7 +102,7 @@ describe("photoUrls", () => {
       const { verifySignature } = await import("@/lib/photoUrls");
 
       const expiredTimestamp = String(Math.floor(Date.now() / 1000) - 100);
-      const result = verifySignature(
+      const result = await verifySignature(
         "place",
         "photo",
         "medium",

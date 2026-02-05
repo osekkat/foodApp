@@ -120,7 +120,27 @@ export const getFeaturedPlaces = query({
       .take(limit);
 
     // Only return published places
-    return places.filter((p) => p.publishedAt && p.publishedAt <= Date.now());
+    const publishedPlaces = places.filter((p) => p.publishedAt && p.publishedAt <= Date.now());
+
+    // Enrich with location data from places table
+    const enrichedPlaces = await Promise.all(
+      publishedPlaces.map(async (cp) => {
+        const placeDoc = await ctx.db
+          .query("places")
+          .withIndex("by_placeKey", (q) => q.eq("placeKey", cp.placeKey))
+          .first();
+
+        return {
+          ...cp,
+          location: {
+            lat: placeDoc?.lat ?? 0,
+            lng: placeDoc?.lng ?? 0,
+          },
+        };
+      })
+    );
+
+    return enrichedPlaces;
   },
 });
 

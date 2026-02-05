@@ -192,7 +192,6 @@ const nextConfig: NextConfig = {
     localPatterns: [
       {
         pathname: "/api/photos/**",
-        search: "?size=*",
       },
     ],
   },

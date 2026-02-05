@@ -1,5 +1,6 @@
 import { query, mutation, action } from "./_generated/server";
 import { v } from "convex/values";
+import { generateSignedPhotoUrl } from "../lib/photoUrls";
 
 /**
  * Places queries and mutations
@@ -67,8 +68,7 @@ export const textSearch = action({
       userRatingCount?: number;
       priceLevel?: string;
       formattedAddress?: string;
-      /** First photo reference for thumbnails (policy-safe: reference only, not content) */
-      photoReference?: string;
+      photoUrl?: string;
     }>;
     error?: string;
   }> => {
@@ -100,12 +100,12 @@ export const textSearch = action({
 
     // Transform to our format
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const places = rawPlaces.map((place: any) => {
+    const places = await Promise.all(rawPlaces.map(async (place: any) => {
       const placeId = place.id ?? place.name?.split("/").pop() ?? "";
       
       // Extract first photo reference (policy-safe: we only store the reference, not the photo)
       // Google Places API (New) returns photos as: { name: "places/{placeId}/photos/{photoRef}", ... }
-      let photoReference: string | undefined;
+      let photoUrl: string | undefined;
       if (place.photos && place.photos.length > 0) {
         const photoName = place.photos[0]?.name;
         if (photoName) {
@@ -113,7 +113,14 @@ export const textSearch = action({
           // Format: "places/{placeId}/photos/{photoReference}"
           const parts = photoName.split("/photos/");
           if (parts.length === 2) {
-            photoReference = parts[1];
+            const photoReference = parts[1];
+            // Generate signed URL for the photo
+            try {
+              photoUrl = await generateSignedPhotoUrl(placeId, photoReference, "medium");
+            } catch {
+              // If signing is unavailable/misconfigured, omit photos rather than failing search.
+              photoUrl = undefined;
+            }
           }
         }
       }
@@ -131,9 +138,9 @@ export const textSearch = action({
         userRatingCount: place.userRatingCount,
         priceLevel: place.priceLevel,
         formattedAddress: place.formattedAddress,
-        photoReference,
+        photoUrl,
       };
-    });
+    }));
 
     return {
       success: true,

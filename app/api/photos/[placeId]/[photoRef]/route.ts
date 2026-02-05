@@ -23,6 +23,7 @@ import {
  */
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 interface RouteParams {
   params: Promise<{
@@ -127,7 +128,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const verification = verifySignature(placeId, photoRef, size, exp, sig);
+    const verification = await verifySignature(placeId, photoRef, size, exp, sig);
     if (!verification.valid) {
       return finalize(
         new NextResponse(
@@ -170,9 +171,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         "CIRCUIT_OPEN"
       );
     }
-  } catch (error) {
-    // If we can't check circuit state, log and continue (fail open)
-    console.error("Failed to check circuit breaker state:", error);
+  } catch {
+    // If we can't check circuit state, continue (fail open).
+    // IMPORTANT: Never log provider identifiers or URLs.
+    console.error(
+      "photo_proxy_error",
+      JSON.stringify({ requestId, stage: "circuit_state_check_failed" })
+    );
   }
 
   // Check feature flag (photos may be disabled for budget/degradation)
@@ -202,9 +207,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         "PHOTOS_DISABLED"
       );
     }
-  } catch (error) {
-    // If we can't check the flag, log and continue (fail open for photos)
-    console.error("Failed to check photos_enabled flag:", error);
+  } catch {
+    // If we can't check the flag, continue (fail open for photos).
+    // IMPORTANT: Never log provider identifiers or URLs.
+    console.error(
+      "photo_proxy_error",
+      JSON.stringify({ requestId, stage: "feature_flag_check_failed" })
+    );
   }
 
   // Check budget before making the request
@@ -233,9 +242,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         "BUDGET_EXCEEDED"
       );
     }
-  } catch (error) {
-    // If we can't check budget, log and continue (fail open)
-    console.error("Failed to check photos budget:", error);
+  } catch {
+    // If we can't check budget, continue (fail open).
+    // IMPORTANT: Never log provider identifiers or URLs.
+    console.error(
+      "photo_proxy_error",
+      JSON.stringify({ requestId, stage: "budget_check_failed" })
+    );
   }
 
   // Get API key
@@ -253,9 +266,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const maxHeightPx = PHOTO_SIZE_MAP[size];
   const googlePhotoUrl = buildGooglePhotoUrl(placeId, photoRef, maxHeightPx, apiKey);
 
-  // Track whether we successfully contacted the Google API
-  // Used to determine if errors should affect circuit breaker
-  let googleApiSucceeded = false;
   let photoUri: string | undefined;
 
   // Phase 1: Contact Google Places API to get photo URI
@@ -322,16 +332,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Mark Google API as successful
-    googleApiSucceeded = true;
-
     // Record Google API success (we got a valid photoUri)
     try {
       await convex.mutation(api.providerGateway.recordCircuitSuccessPublic, {
         service: "google_places",
       });
-    } catch (error) {
-      console.error("Failed to record circuit success:", error);
+    } catch {
+      console.error(
+        "photo_proxy_error",
+        JSON.stringify({ requestId, stage: "circuit_success_record_failed" })
+      );
     }
   } catch (error) {
     // Google API call failed - record circuit breaker failure
@@ -351,7 +361,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    console.error("Google API error:", error);
+    // IMPORTANT: Never log provider identifiers or URLs.
+    console.error(
+      "photo_proxy_error",
+      JSON.stringify({ requestId, stage: "google_api_request_failed" })
+    );
     return finalize(
       new NextResponse("Internal error", { status: 500 }),
       false,
@@ -380,8 +394,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         endpointClass: "photos",
         cost: 7,
       });
-    } catch (error) {
-      console.error("Failed to record budget usage:", error);
+    } catch {
+      console.error(
+        "photo_proxy_error",
+        JSON.stringify({ requestId, stage: "budget_usage_record_failed" })
+      );
     }
 
     // Stream the image back with appropriate headers
@@ -420,7 +437,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    console.error("CDN fetch error:", error);
+    // IMPORTANT: Never log provider identifiers or URLs.
+    console.error(
+      "photo_proxy_error",
+      JSON.stringify({ requestId, stage: "cdn_fetch_failed" })
+    );
     return finalize(
       new NextResponse("Failed to fetch image", { status: 502 }),
       false,

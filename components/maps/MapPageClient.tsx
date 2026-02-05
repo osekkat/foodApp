@@ -131,8 +131,8 @@ export function MapPageClient({
         places.push({
           placeKey: cp.placeKey,
           name: cp.title,
-          location: {
-            lat: 0, // Curated places may not have location
+          location: cp.location || {
+            lat: 0,
             lng: 0,
           },
           placeType: "restaurant",
@@ -160,13 +160,6 @@ export function MapPageClient({
         ? _formatPriceLevel(result.priceLevel)
         : undefined;
 
-      // Build photo URL from photo reference (via our photo proxy)
-      // URL format: /api/photos/{placeId}/{photoRef}?size=medium
-      let photoUrl: string | undefined;
-      if (result.photoReference && result.placeId) {
-        photoUrl = `/api/photos/${encodeURIComponent(result.placeId)}/${encodeURIComponent(result.photoReference)}?size=medium`;
-      }
-
       places.push({
         placeKey: result.placeKey,
         name: result.displayName || "Unknown Place",
@@ -176,15 +169,21 @@ export function MapPageClient({
         providerReviewCount: result.userRatingCount,
         priceLevel,
         address: result.formattedAddress,
-        photoUrl,
+        photoUrl: result.photoUrl,
       });
     }
 
-    // Add 1-based index to each place
-    return places.map((place, idx) => ({
-      ...place,
-      index: idx + 1,
-    }));
+    // Add 1-based index to map-visible places (those with valid location).
+    // Places without coordinates won't show a marker, so we leave them unnumbered
+    // to avoid gaps/confusion between sidebar numbering and map markers.
+    let counter = 0;
+    return places.map((place) => {
+      const hasLocation = place.location.lat !== 0 && place.location.lng !== 0;
+      return {
+        ...place,
+        index: hasLocation ? ++counter : undefined,
+      };
+    });
   }, [curatedPlaces, searchResults]);
 
   // Convert to map marker format (indices already set in sidebarPlaces)
