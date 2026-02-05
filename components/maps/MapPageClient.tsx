@@ -25,9 +25,7 @@ const DEFAULT_ZOOM = 13;
 
 /**
  * Convert Google place type to our type
- * TODO: Use when provider data includes primaryType
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _getPlaceType(
   primaryType?: string
 ): "restaurant" | "cafe" | "bakery" | "market" | "default" {
@@ -42,9 +40,7 @@ function _getPlaceType(
 
 /**
  * Convert price level enum to display string
- * TODO: Use when provider data includes priceLevel
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function _formatPriceLevel(priceLevel?: string): string | undefined {
   if (!priceLevel) return undefined;
   const levels: Record<string, string> = {
@@ -151,16 +147,25 @@ export function MapPageClient({
       // Skip if already added from curated
       if (places.some((p) => p.placeKey === result.placeKey)) continue;
 
+      // Convert primary type to our format
+      const placeType = result.primaryType
+        ? _getPlaceType(result.primaryType)
+        : "restaurant";
+
+      // Convert price level to display format
+      const priceLevel = result.priceLevel
+        ? _formatPriceLevel(result.priceLevel)
+        : undefined;
+
       places.push({
         placeKey: result.placeKey,
         name: result.displayName || "Unknown Place",
         location: result.location,
-        placeType: "restaurant", // Default, would come from provider
-        // These fields would be populated from provider details
-        // providerRating: undefined,
-        // providerReviewCount: undefined,
-        // isOpen: undefined,
-        // address: undefined,
+        placeType,
+        providerRating: result.rating,
+        providerReviewCount: result.userRatingCount,
+        priceLevel,
+        address: result.formattedAddress,
       });
     }
 
