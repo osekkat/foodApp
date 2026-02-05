@@ -195,7 +195,7 @@ export function PlaceListSidebar({
 
       {/* Results count */}
       <div className="flex-shrink-0 border-b border-zinc-200 bg-white px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <div className="text-sm text-zinc-600 dark:text-zinc-400">
           {isLoading ? (
             <Skeleton className="h-4 w-32" />
           ) : (
@@ -206,7 +206,7 @@ export function PlaceListSidebar({
               {places.length === 1 ? "result" : "results"}
             </>
           )}
-        </p>
+        </div>
       </div>
 
       {/* Scrollable list */}
