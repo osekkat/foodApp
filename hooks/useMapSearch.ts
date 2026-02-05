@@ -225,11 +225,6 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         setError(null);
         setShowSearchButton(false);
 
-        // Check if request was aborted
-        if (abortControllerRef.current.signal.aborted) {
-          return;
-        }
-
         // Call the real textSearch action
         const searchQuery = query || defaultQuery;
         const result = await textSearchAction({

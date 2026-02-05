@@ -279,26 +279,28 @@ export function PlaceListCard({
           </div>
         </div>
 
-        {/* Action buttons row */}
-        <div className="flex items-center gap-2 border-t border-zinc-100 px-4 py-2 dark:border-zinc-800">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 flex-1 text-xs"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              // Open in Google Maps
-              window.open(
-                `https://www.google.com/maps/dir/?api=1&destination=${place.location.lat},${place.location.lng}`,
-                "_blank"
-              );
-            }}
-          >
-            <Navigation className="mr-1.5 h-3.5 w-3.5" />
-            Get Directions
-          </Button>
-        </div>
+        {/* Action buttons row - only show if we have valid location */}
+        {place.location.lat !== 0 && place.location.lng !== 0 && (
+          <div className="flex items-center gap-2 border-t border-zinc-100 px-4 py-2 dark:border-zinc-800">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 flex-1 text-xs"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                // Open in Google Maps
+                window.open(
+                  `https://www.google.com/maps/dir/?api=1&destination=${place.location.lat},${place.location.lng}`,
+                  "_blank"
+                );
+              }}
+            >
+              <Navigation className="mr-1.5 h-3.5 w-3.5" />
+              Get Directions
+            </Button>
+          </div>
+        )}
       </Link>
     </div>
   );

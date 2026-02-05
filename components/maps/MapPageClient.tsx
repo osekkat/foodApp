@@ -3,7 +3,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
 import { useMapSearch } from "@/hooks/useMapSearch";
 import { MapView, type PlaceMarkerData } from "./";
@@ -112,8 +111,12 @@ export function MapPageClient({
     zoom: mapZoom,
   });
 
+  // Work around TypeScript depth limitations with complex Convex types
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+  const apiRef: any = require("@/convex/_generated/api").api;
+
   // Fetch curated places for the city (always shown)
-  const curatedPlaces = useQuery(api.curatedPlaces.getFeaturedPlaces, {
+  const curatedPlaces = useQuery(apiRef.curatedPlaces.getFeaturedPlaces, {
     city: initialCity,
     limit: 20,
   });
@@ -225,7 +228,11 @@ export function MapPageClient({
     setMapZoom(initialZoom);
   }, [initialCenter, initialZoom]);
 
-  const title = `${searchQuery.charAt(0).toUpperCase() + searchQuery.slice(1)} near ${initialCity.charAt(0).toUpperCase() + initialCity.slice(1)}`;
+  const capitalizedQuery = searchQuery
+    ? searchQuery.charAt(0).toUpperCase() + searchQuery.slice(1)
+    : "Places";
+  const capitalizedCity = initialCity.charAt(0).toUpperCase() + initialCity.slice(1);
+  const title = `${capitalizedQuery} near ${capitalizedCity}`;
   const subtitle = `Showing ${sidebarPlaces.length} results`;
 
   return (
