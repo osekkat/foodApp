@@ -123,7 +123,7 @@ jobs:
         run: bun run test:e2e --project=chromium
         env:
           CI: true
-          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.CONVEX_URL_STAGING }}
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.CONVEX_URL }}
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
@@ -158,7 +158,7 @@ jobs:
       - name: Build
         run: bun run build
         env:
-          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.CONVEX_URL_STAGING }}
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.CONVEX_URL }}
 
       - name: Deploy to Vercel (Staging)
         uses: amondnet/vercel-action@v25
@@ -171,7 +171,7 @@ jobs:
       - name: Deploy Convex (Staging)
         run: bunx convex deploy
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY_STAGING }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
 
   # ============================================
   # Stage 6: Deploy to Production
@@ -198,7 +198,7 @@ jobs:
       - name: Build
         run: bun run build
         env:
-          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.CONVEX_URL_PRODUCTION }}
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.CONVEX_URL }}
 
       - name: Deploy to Vercel (Production)
         uses: amondnet/vercel-action@v25
@@ -212,4 +212,4 @@ jobs:
       - name: Deploy Convex (Production)
         run: bunx convex deploy
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY_PRODUCTION }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
