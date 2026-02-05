@@ -145,8 +145,8 @@ Sentry.init({
   // Adjust sample rate in production
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
 
-  // Disable debug in production
-  debug: process.env.NODE_ENV !== "production",
+  // Disable debug logging (too verbose)
+  debug: false,
 
   // Replay configuration
   replaysSessionSampleRate: 0.1,

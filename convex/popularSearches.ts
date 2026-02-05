@@ -21,7 +21,80 @@ import {
   internalMutation,
   internalQuery,
 } from "./_generated/server";
-import { normalizeQuery } from "../lib/transliteration";
+
+// ============================================================================
+// Transliteration (duplicated from lib/transliteration.ts)
+// Convex functions run in an isolated environment and cannot import from lib/
+// ============================================================================
+
+/**
+ * Arabic text normalization for search
+ */
+function normalizeArabic(text: string): string {
+  return text
+    .replace(/[\u064B-\u065F\u0670]/g, "") // Remove diacritics
+    .replace(/[أإآٱ]/g, "ا") // Normalize alef
+    .replace(/ة/g, "ه"); // Ta marbuta -> ha
+}
+
+/**
+ * Moroccan food transliterations (subset for Convex runtime)
+ */
+const MOROCCAN_FOOD_TRANSLITERATIONS: Record<string, string[]> = {
+  tagine: ["tajine", "طاجين", "طجين", "الطاجين"],
+  couscous: ["كسكس", "كسكسو", "الكسكس", "koskos", "kuskus"],
+  pastilla: ["bastilla", "bestilla", "بسطيلة", "البسطيلة", "pastela"],
+  harira: ["حريرة", "الحريرة", "hrira"],
+  tanjia: ["tangia", "طنجية", "الطنجية"],
+  mechoui: ["meshwi", "مشوي", "المشوي", "mchoui"],
+  rfissa: ["رفيسة", "الرفيسة", "trid"],
+  mrouzia: ["مروزية", "المروزية"],
+  kefta: ["كفتة", "الكفتة", "kofta", "kofte", "kafta"],
+  brochettes: ["بروشات", "شواء", "brochette", "skewers"],
+  msemen: ["مسمن", "المسمن", "msemmen", "rghaif"],
+  baghrir: ["بغرير", "البغرير", "beghrir", "thousand holes"],
+  harcha: ["حرشة", "الحرشة"],
+  khobz: ["خبز", "الخبز", "bread", "pain"],
+  chebakia: ["شباكية", "الشباكية", "chebakiya"],
+  briouates: ["بريوات", "البريوات", "briouate", "briwat"],
+  zaalouk: ["زعلوك", "الزعلوك"],
+  taktouka: ["تكتوكة", "التكتوكة"],
+  bissara: ["بصارة", "البصارة", "bessara"],
+  atay: ["أتاي", "الشاي", "mint tea", "the menthe", "the a la menthe", "moroccan tea"],
+  smen: ["سمن", "السمن", "preserved butter"],
+  chermoula: ["شرمولة", "الشرمولة", "charmoula"],
+  marrakech: ["مراكش", "المراكشي", "marrakeshi"],
+  fes: ["فاس", "الفاسي", "fassi", "fez"],
+  casablanca: ["الدار البيضاء", "كازابلانكا", "casa"],
+  tangier: ["طنجة", "الطنجي", "tanger"],
+  restaurant: ["مطعم", "المطعم", "resto"],
+  cafe: ["مقهى", "قهوة", "coffee", "kahwa"],
+};
+
+// Build reverse lookup
+const VARIANT_TO_CANONICAL: Map<string, string> = new Map();
+for (const [canonical, variants] of Object.entries(MOROCCAN_FOOD_TRANSLITERATIONS)) {
+  for (const variant of variants) {
+    VARIANT_TO_CANONICAL.set(variant.toLowerCase(), canonical);
+  }
+  VARIANT_TO_CANONICAL.set(canonical.toLowerCase(), canonical);
+}
+
+/**
+ * Normalize query to canonical form
+ */
+function normalizeQuery(query: string): string {
+  if (!query) return "";
+
+  let normalized = normalizeArabic(query.toLowerCase());
+  const words = normalized.split(/\s+/);
+  const normalizedWords = words.map((word) => {
+    const canonical = VARIANT_TO_CANONICAL.get(word);
+    return canonical || word;
+  });
+
+  return normalizedWords.join(" ");
+}
 
 // ============================================================================
 // Privacy Configuration

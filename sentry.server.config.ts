@@ -138,7 +138,7 @@ Sentry.init({
   // Lower sample rate in production
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
 
-  debug: process.env.NODE_ENV !== "production",
+  debug: false,
 
   // Scrub provider content before sending
   beforeSend(event) {

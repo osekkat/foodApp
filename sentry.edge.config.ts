@@ -133,7 +133,7 @@ Sentry.init({
 
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
 
-  debug: process.env.NODE_ENV !== "production",
+  debug: false,
 
   beforeSend(event) {
     return scrubEvent(event);
