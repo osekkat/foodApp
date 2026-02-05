@@ -29,6 +29,10 @@ interface PlaceMarkerProps {
   place: PlaceMarkerData;
   onClick?: (placeKey: string) => void;
   clusterer?: Clusterer;
+  /** Whether this marker is highlighted (hovered from sidebar) */
+  isHighlighted?: boolean;
+  /** Whether this marker is selected */
+  isSelected?: boolean;
 }
 
 /**
@@ -43,19 +47,44 @@ const MARKER_COLORS: Record<string, string> = {
 };
 
 /**
- * Get marker icon configuration based on place data
+ * Highlight/selected marker colors
  */
-function getMarkerIcon(place: PlaceMarkerData): google.maps.Symbol {
-  const color = MARKER_COLORS[place.placeType || "default"];
-  const scale = place.isCurated ? 1.2 : 1;
+const HIGHLIGHT_COLOR = "#F97316"; // Orange for highlighted (sidebar hover)
+const SELECTED_COLOR = "#6B46C1"; // Purple for selected
+
+/**
+ * Get marker icon configuration based on place data and state
+ */
+function getMarkerIcon(
+  place: PlaceMarkerData,
+  isHighlighted?: boolean,
+  isSelected?: boolean
+): google.maps.Symbol {
+  // Determine color based on state
+  let color: string;
+  if (isSelected) {
+    color = SELECTED_COLOR;
+  } else if (isHighlighted) {
+    color = HIGHLIGHT_COLOR;
+  } else {
+    color = MARKER_COLORS[place.placeType || "default"];
+  }
+
+  // Scale up for curated, highlighted, or selected markers
+  let scale = place.isCurated ? 1.2 : 1;
+  if (isHighlighted) scale *= 1.3;
+  if (isSelected) scale *= 1.4;
+
+  // Stroke weight increases for highlighted/selected
+  const strokeWeight = isSelected ? 3 : isHighlighted ? 2.5 : 2;
 
   // Use a simple circle marker for performance
   return {
     path: google.maps.SymbolPath.CIRCLE,
     fillColor: color,
-    fillOpacity: 0.9,
+    fillOpacity: isSelected || isHighlighted ? 1 : 0.9,
     strokeColor: "#ffffff",
-    strokeWeight: 2,
+    strokeWeight,
     scale: 10 * scale,
   };
 }
@@ -68,8 +97,16 @@ function getMarkerIcon(place: PlaceMarkerData): google.maps.Symbol {
  * - Larger marker for curated places
  * - Click to select/view details
  * - Clusterable for performance
+ * - Highlight state for sidebar hover sync
+ * - Selected state for current selection
  */
-export function PlaceMarker({ place, onClick, clusterer }: PlaceMarkerProps) {
+export function PlaceMarker({
+  place,
+  onClick,
+  clusterer,
+  isHighlighted = false,
+  isSelected = false,
+}: PlaceMarkerProps) {
   const position = useMemo(
     () => ({
       lat: place.location.lat,
@@ -78,11 +115,17 @@ export function PlaceMarker({ place, onClick, clusterer }: PlaceMarkerProps) {
     [place.location.lat, place.location.lng]
   );
 
-  const icon = useMemo(() => getMarkerIcon(place), [place]);
+  const icon = useMemo(
+    () => getMarkerIcon(place, isHighlighted, isSelected),
+    [place, isHighlighted, isSelected]
+  );
 
   const handleClick = useCallback(() => {
     onClick?.(place.placeKey);
   }, [onClick, place.placeKey]);
+
+  // Higher z-index for highlighted/selected markers so they appear on top
+  const zIndex = isSelected ? 1000 : isHighlighted ? 500 : undefined;
 
   return (
     <Marker
@@ -91,6 +134,7 @@ export function PlaceMarker({ place, onClick, clusterer }: PlaceMarkerProps) {
       title={place.name}
       onClick={handleClick}
       clusterer={clusterer}
+      zIndex={zIndex}
     />
   );
 }

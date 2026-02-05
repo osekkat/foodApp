@@ -38,6 +38,91 @@ export const autocomplete = action({
   },
 });
 
+// Text search action for "Search this area" on map
+export const textSearch = action({
+  args: {
+    query: v.string(),
+    locationRestriction: v.optional(v.object({
+      north: v.number(),
+      south: v.number(),
+      east: v.number(),
+      west: v.number(),
+    })),
+    locationBias: v.optional(v.object({
+      lat: v.number(),
+      lng: v.number(),
+      radiusMeters: v.optional(v.number()),
+    })),
+    language: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{
+    success: boolean;
+    places: Array<{
+      placeKey: string;
+      placeId: string;
+      displayName: string;
+      location: { lat: number; lng: number };
+      primaryType?: string;
+      rating?: number;
+      userRatingCount?: number;
+      priceLevel?: string;
+      formattedAddress?: string;
+    }>;
+    error?: string;
+  }> => {
+    // Work around TypeScript depth limitations with complex Convex types
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+    const internal: any = require("./_generated/api").internal;
+
+    const result = await ctx.runAction(internal.providerGateway.providerRequest, {
+      endpointClass: "text_search",
+      fieldSet: "TEXT_SEARCH",
+      query: args.query,
+      locationRestriction: args.locationRestriction,
+      locationBias: args.locationBias,
+      language: args.language ?? "en",
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        places: [],
+        error: result.error?.message ?? "Search failed",
+      };
+    }
+
+    // Extract places from the response
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = result.data as any;
+    const rawPlaces = data?.places ?? [];
+
+    // Transform to our format
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const places = rawPlaces.map((place: any) => {
+      const placeId = place.id ?? place.name?.split("/").pop() ?? "";
+      return {
+        placeKey: `g:${placeId}`,
+        placeId,
+        displayName: place.displayName?.text ?? "Unknown Place",
+        location: {
+          lat: place.location?.latitude ?? 0,
+          lng: place.location?.longitude ?? 0,
+        },
+        primaryType: place.primaryType,
+        rating: place.rating,
+        userRatingCount: place.userRatingCount,
+        priceLevel: place.priceLevel,
+        formattedAddress: place.formattedAddress,
+      };
+    });
+
+    return {
+      success: true,
+      places,
+    };
+  },
+});
+
 // Get or create a place by placeKey
 export const getOrCreate = mutation({
   args: {
