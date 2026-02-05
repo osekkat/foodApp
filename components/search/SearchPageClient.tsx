@@ -31,17 +31,16 @@ export interface CityData {
 
 export interface SearchPageClientProps {
   city?: CityData;
-  initialQuery?: string;
 }
 
-export function SearchPageClient({ city, initialQuery = "" }: SearchPageClientProps) {
+export function SearchPageClient({ city }: SearchPageClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   // State
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [activeQuery, setActiveQuery] = useState(initialQuery);
+  const [activeQuery, setActiveQuery] = useState("");
 
   // Use the search hook with location bias from city
   const {

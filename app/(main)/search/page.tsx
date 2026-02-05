@@ -15,14 +15,12 @@ export const dynamic = "force-dynamic";
 interface SearchPageProps {
   searchParams: Promise<{
     city?: string;
-    q?: string;
   }>;
 }
 
 async function SearchPageContent({ searchParams }: SearchPageProps) {
   const params = await searchParams;
   const citySlug = params.city;
-  const initialQuery = params.q || "";
 
   // Fetch city data if city slug is provided
   let city: CityData | undefined;
@@ -37,7 +35,7 @@ async function SearchPageContent({ searchParams }: SearchPageProps) {
     }
   }
 
-  return <SearchPageClient city={city} initialQuery={initialQuery} />;
+  return <SearchPageClient city={city} />;
 }
 
 function SearchPageSkeleton() {
