@@ -83,6 +83,10 @@ export interface MapViewProps {
   enableClustering?: boolean;
   /** Custom CSS class for container */
   className?: string;
+  /** Place key that is currently highlighted (e.g., from sidebar hover) */
+  highlightedPlaceKey?: string | null;
+  /** Place key that is currently selected */
+  selectedPlaceKey?: string | null;
 }
 
 /**
@@ -108,6 +112,8 @@ export function MapView({
   zoom = DEFAULT_ZOOM,
   enableClustering = true,
   className,
+  highlightedPlaceKey,
+  selectedPlaceKey,
 }: MapViewProps) {
   const mapRef = useRef<google.maps.Map | null>(null);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
@@ -184,10 +190,12 @@ export function MapView({
           place={place}
           onClick={handleMarkerClick}
           clusterer={clusterer}
+          isHighlighted={highlightedPlaceKey === place.placeKey}
+          isSelected={selectedPlaceKey === place.placeKey}
         />
       ));
     },
-    [places, handleMarkerClick]
+    [places, handleMarkerClick, highlightedPlaceKey, selectedPlaceKey]
   );
 
   return (
