@@ -18,6 +18,7 @@
 
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { DAILY_BUDGET_LIMITS, type EndpointClass } from "./fieldSets";
 
 // ============================================================================
 // Types & Configuration
@@ -96,6 +97,16 @@ const MODE_REASONS = {
  */
 const BUDGET_WARNING_THRESHOLD = 80;
 
+/**
+ * Endpoint classes included in service-mode budget health evaluation.
+ */
+const BUDGET_HEALTH_ENDPOINTS: EndpointClass[] = [
+  "place_details",
+  "text_search",
+  "autocomplete",
+  "photos",
+];
+
 // ============================================================================
 // Public Queries
 // ============================================================================
@@ -163,10 +174,9 @@ export const getServiceModeHistory = query({
 export const checkBudgetHealth = internalQuery({
   handler: async (ctx): Promise<{ ok: boolean; warningLevel?: string }> => {
     // Check budget for main endpoint classes
-    const endpointClasses = ["place_details", "text_search", "autocomplete", "photos"];
     let worstUsage = 0;
 
-    for (const endpointClass of endpointClasses) {
+    for (const endpointClass of BUDGET_HEALTH_ENDPOINTS) {
       const todayKey = `budget:${endpointClass}:${new Date().toISOString().split("T")[0]}`;
       const usage = await ctx.db
         .query("rateLimits")
@@ -174,8 +184,7 @@ export const checkBudgetHealth = internalQuery({
         .first();
 
       if (usage) {
-        // Estimate usage percentage (assumes 1000 daily limit as default)
-        const limit = 1000; // We'd need to import this from fieldSets
+        const limit = DAILY_BUDGET_LIMITS[endpointClass] ?? 1000;
         const usagePercent = (usage.count / limit) * 100;
         worstUsage = Math.max(worstUsage, usagePercent);
       }
@@ -237,17 +246,16 @@ export const evaluateServiceMode = internalMutation({
     // Get circuit breaker state (check if healthy - if unhealthy, breaker is open)
     const circuitBreakerClosed = providerHealthy;
 
-    // Get budget health (inline to avoid circular reference)
-    const endpointClasses = ["place_details", "text_search", "autocomplete", "photos"];
+    // Get budget health
     let worstUsage = 0;
-    for (const endpointClass of endpointClasses) {
+    for (const endpointClass of BUDGET_HEALTH_ENDPOINTS) {
       const todayKey = `budget:${endpointClass}:${new Date().toISOString().split("T")[0]}`;
       const usage = await ctx.db
         .query("rateLimits")
         .withIndex("by_key", (q) => q.eq("key", todayKey))
         .first();
       if (usage) {
-        const limit = 1000;
+        const limit = DAILY_BUDGET_LIMITS[endpointClass] ?? 1000;
         const usagePercent = (usage.count / limit) * 100;
         worstUsage = Math.max(worstUsage, usagePercent);
       }

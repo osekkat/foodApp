@@ -49,7 +49,10 @@ interface MapProviderProps {
  * - Requires NEXT_PUBLIC_GOOGLE_MAPS_KEY environment variable
  */
 export function MapProvider({ children }: MapProviderProps) {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
+  const apiKey =
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ??
+    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ??
+    "";
 
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: apiKey,
@@ -60,7 +63,9 @@ export function MapProvider({ children }: MapProviderProps) {
 
   if (!apiKey) {
     if (process.env.NODE_ENV === "development") {
-      console.warn("NEXT_PUBLIC_GOOGLE_MAPS_KEY not configured - map features disabled");
+      console.warn(
+        "NEXT_PUBLIC_GOOGLE_MAPS_KEY (or NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) not configured - map features disabled"
+      );
     }
     return <>{children}</>;
   }
