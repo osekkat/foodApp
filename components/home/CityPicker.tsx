@@ -1,12 +1,14 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function CityPicker() {
-  const cities = useQuery(api.cities.getFeatured);
+  // Work around TypeScript depth limitations with complex Convex types
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+  const apiRef: any = require("@/convex/_generated/api").api;
+  const cities = useQuery(apiRef.cities.getFeatured);
 
   if (cities === undefined) {
     return <CityPickerSkeleton />;
@@ -28,7 +30,7 @@ export function CityPicker() {
         {sortedCities.map((city) => (
           <Link
             key={city._id}
-            href={`/search?city=${city.slug}`}
+            href={`/map?city=${city.slug}`}
             className="group flex flex-col items-center rounded-xl border border-zinc-200 bg-white p-6 transition-all hover:border-orange-300 hover:shadow-md dark:border-zinc-700 dark:bg-zinc-800 dark:hover:border-orange-600"
           >
             <span className="text-lg font-medium text-zinc-900 group-hover:text-orange-600 dark:text-zinc-100 dark:group-hover:text-orange-400">

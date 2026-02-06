@@ -115,7 +115,7 @@ export default function DishExplorerPage() {
             <p className="mb-4 text-zinc-600 dark:text-zinc-400">
               Be the first to recommend a place! Leave a review and mention this dish.
             </p>
-            <Link href="/search">
+            <Link href="/map">
               <Button>Search for places</Button>
             </Link>
           </div>

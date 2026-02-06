@@ -1,30 +1,6 @@
-"use client";
-
-import { useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 
 export function SearchHero() {
-  const [query, setQuery] = useState("");
-  const router = useRouter();
-
-  const navigateToMap = useCallback((value: string) => {
-    const trimmed = value.trim();
-    if (trimmed) {
-      router.push(`/map?q=${encodeURIComponent(trimmed)}`);
-      return;
-    }
-    router.push("/map");
-  }, [router]);
-
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      navigateToMap(query);
-    },
-    [query, navigateToMap]
-  );
-
   return (
     <section className="mb-16 text-center">
       <h2 className="mb-4 text-4xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 sm:text-5xl">
@@ -35,12 +11,11 @@ export function SearchHero() {
         Morocco&apos;s vibrant cities.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-8 flex justify-center">
+      <form action="/map" method="get" className="mt-8 flex justify-center">
         <div className="relative w-full max-w-xl">
           <input
             type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            name="q"
             placeholder="Search for restaurants, dishes, or places..."
             className="w-full rounded-full border border-zinc-200 bg-white px-6 py-4 pe-12 text-lg shadow-sm placeholder:text-zinc-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
           />

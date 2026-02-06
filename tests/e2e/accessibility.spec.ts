@@ -17,8 +17,8 @@ test.describe("Accessibility", () => {
     expect(criticalViolations).toEqual([]);
   });
 
-  test("search page should not have critical accessibility violations", async ({ page }) => {
-    await page.goto("/search");
+  test("map page should not have critical accessibility violations", async ({ page }) => {
+    await page.goto("/map");
 
     const accessibilityScanResults = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])

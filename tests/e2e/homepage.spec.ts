@@ -31,8 +31,8 @@ test.describe("Homepage", () => {
     await expect(page.getByRole("button", { name: /find food near me/i })).toBeVisible();
   });
 
-  test("should navigate to search page when clicking Search link", async ({ page }) => {
+  test("should navigate to map page when clicking Search link", async ({ page }) => {
     await page.getByRole("link", { name: "Search" }).click();
-    await expect(page).toHaveURL("/search");
+    await expect(page).toHaveURL("/map");
   });
 });

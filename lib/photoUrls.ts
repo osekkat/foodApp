@@ -27,19 +27,46 @@ export const PHOTO_SIZE_MAP: Record<PhotoSize, number> = {
 const DEFAULT_TTL_SECONDS = 900;
 
 /**
- * Get the signing secret from environment
- * Falls back to a development-only secret if not set
+ * Get all signing secrets that may be valid in the current runtime.
+ *
+ * We support both a dedicated signing secret and a provider-key-derived fallback
+ * so signatures can still validate during staggered env rollouts between runtimes.
+ */
+function getSigningSecrets(): string[] {
+  const secrets: string[] = [];
+
+  const dedicatedSecret = process.env.PHOTO_SIGNING_SECRET;
+  if (dedicatedSecret) {
+    secrets.push(dedicatedSecret);
+  }
+
+  const providerKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (providerKey) {
+    const providerDerivedSecret = `photo-signing:${providerKey}`;
+    if (!secrets.includes(providerDerivedSecret)) {
+      secrets.push(providerDerivedSecret);
+    }
+  }
+
+  if (secrets.length > 0) {
+    return secrets;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "PHOTO_SIGNING_SECRET (or GOOGLE_PLACES_API_KEY fallback) must be set in production"
+    );
+  }
+
+  // Development fallback - NOT secure, just for testing
+  return ["dev-signing-secret-not-for-production"];
+}
+
+/**
+ * Primary signing secret for URL generation.
  */
 function getSigningSecret(): string {
-  const secret = process.env.PHOTO_SIGNING_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("PHOTO_SIGNING_SECRET must be set in production");
-    }
-    // Development fallback - NOT secure, just for testing
-    return "dev-signing-secret-not-for-production";
-  }
-  return secret;
+  return getSigningSecrets()[0];
 }
 
 /**
@@ -134,15 +161,19 @@ export async function verifySignature(
     return { valid: false, reason: "expired" };
   }
 
-  // Verify signature
+  // Verify signature against all valid secrets for this runtime.
+  // This prevents breakage when one runtime still signs with provider-key fallback
+  // while another runtime has PHOTO_SIGNING_SECRET configured.
   const payload = `${placeId}:${photoRef}:${size}:${exp}`;
-  const expected = await hmacSha256(getSigningSecret(), payload);
-
-  if (!constantTimeEqual(sig, expected)) {
-    return { valid: false, reason: "invalid_signature" };
+  const signingSecrets = getSigningSecrets();
+  for (const signingSecret of signingSecrets) {
+    const expected = await hmacSha256(signingSecret, payload);
+    if (constantTimeEqual(sig, expected)) {
+      return { valid: true };
+    }
   }
 
-  return { valid: true };
+  return { valid: false, reason: "invalid_signature" };
 }
 
 /**

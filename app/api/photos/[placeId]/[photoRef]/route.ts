@@ -86,6 +86,7 @@ function isValidSize(size: string): size is PhotoSize {
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const requestId = generateRequestId();
   const startTime = Date.now();
+  const isProduction = process.env.NODE_ENV === "production";
   const { placeId, photoRef } = await params;
   const searchParams = request.nextUrl.searchParams;
   const size = searchParams.get("size") || "medium";
@@ -119,7 +120,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 
   // In production, require valid signature
-  if (process.env.NODE_ENV === "production") {
+  if (isProduction) {
     if (!exp || !sig) {
       return finalize(
         new NextResponse("Missing signature parameters", { status: 403 }),
@@ -143,112 +144,118 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
   }
 
-  const convex = getConvexClient();
+  const convex = isProduction ? getConvexClient() : null;
 
   // Check circuit breaker state before making provider call
-  try {
-    const circuitState = await convex.query(api.providerGateway.getCircuitStatePublic, {
-      service: "google_places",
-    });
+  if (isProduction && convex) {
+    try {
+      const circuitState = await convex.query(api.providerGateway.getCircuitStatePublic, {
+        service: "google_places",
+      });
 
-    if (circuitState === "open") {
-      return finalize(
-        new NextResponse(
-          JSON.stringify({
-            error: "Service temporarily unavailable",
-            reason: "circuit_open",
-          }),
-          {
-            status: 503,
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-store",
-              "Retry-After": "30",
-            },
-          }
-        ),
-        false,
-        "CIRCUIT_OPEN"
+      if (circuitState === "open") {
+        return finalize(
+          new NextResponse(
+            JSON.stringify({
+              error: "Service temporarily unavailable",
+              reason: "circuit_open",
+            }),
+            {
+              status: 503,
+              headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "Retry-After": "30",
+              },
+            }
+          ),
+          false,
+          "CIRCUIT_OPEN"
+        );
+      }
+    } catch {
+      // If we can't check circuit state, continue (fail open).
+      // IMPORTANT: Never log provider identifiers or URLs.
+      console.error(
+        "photo_proxy_error",
+        JSON.stringify({ requestId, stage: "circuit_state_check_failed" })
       );
     }
-  } catch {
-    // If we can't check circuit state, continue (fail open).
-    // IMPORTANT: Never log provider identifiers or URLs.
-    console.error(
-      "photo_proxy_error",
-      JSON.stringify({ requestId, stage: "circuit_state_check_failed" })
-    );
   }
 
   // Check feature flag (photos may be disabled for budget/degradation)
-  try {
-    // @ts-expect-error - TypeScript depth limit with complex Convex types
-    const flag = await convex.query(api.providerGateway.checkFeatureFlag, {
-      key: "photos_enabled",
-    });
+  if (isProduction && convex) {
+    try {
+      // @ts-expect-error - TypeScript depth limit with complex Convex types
+      const flag = await convex.query(api.providerGateway.checkFeatureFlag, {
+        key: "photos_enabled",
+      });
 
-    if (!flag.enabled) {
-      return finalize(
-        new NextResponse(
-          JSON.stringify({
-            error: "Photos temporarily unavailable",
-            reason: flag.reason || "service_degraded",
-          }),
-          {
-            status: 503,
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-store",
-              "Retry-After": "300",
-            },
-          }
-        ),
-        false,
-        "PHOTOS_DISABLED"
+      if (!flag.enabled) {
+        return finalize(
+          new NextResponse(
+            JSON.stringify({
+              error: "Photos temporarily unavailable",
+              reason: flag.reason || "service_degraded",
+            }),
+            {
+              status: 503,
+              headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "Retry-After": "300",
+              },
+            }
+          ),
+          false,
+          "PHOTOS_DISABLED"
+        );
+      }
+    } catch {
+      // If we can't check the flag, continue (fail open for photos).
+      // IMPORTANT: Never log provider identifiers or URLs.
+      console.error(
+        "photo_proxy_error",
+        JSON.stringify({ requestId, stage: "feature_flag_check_failed" })
       );
     }
-  } catch {
-    // If we can't check the flag, continue (fail open for photos).
-    // IMPORTANT: Never log provider identifiers or URLs.
-    console.error(
-      "photo_proxy_error",
-      JSON.stringify({ requestId, stage: "feature_flag_check_failed" })
-    );
   }
 
   // Check budget before making the request
-  try {
-    const budget = await convex.query(api.providerGateway.checkBudgetPublic, {
-      endpointClass: "photos",
-    });
+  if (isProduction && convex) {
+    try {
+      const budget = await convex.query(api.providerGateway.checkBudgetPublic, {
+        endpointClass: "photos",
+      });
 
-    if (!budget.allowed) {
-      return finalize(
-        new NextResponse(
-          JSON.stringify({
-            error: "Photos temporarily unavailable",
-            reason: "budget_exceeded",
-          }),
-          {
-            status: 503,
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-store",
-              "Retry-After": "3600", // Budget resets daily
-            },
-          }
-        ),
-        false,
-        "BUDGET_EXCEEDED"
+      if (!budget.allowed) {
+        return finalize(
+          new NextResponse(
+            JSON.stringify({
+              error: "Photos temporarily unavailable",
+              reason: "budget_exceeded",
+            }),
+            {
+              status: 503,
+              headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "Retry-After": "3600", // Budget resets daily
+              },
+            }
+          ),
+          false,
+          "BUDGET_EXCEEDED"
+        );
+      }
+    } catch {
+      // If we can't check budget, continue (fail open).
+      // IMPORTANT: Never log provider identifiers or URLs.
+      console.error(
+        "photo_proxy_error",
+        JSON.stringify({ requestId, stage: "budget_check_failed" })
       );
     }
-  } catch {
-    // If we can't check budget, continue (fail open).
-    // IMPORTANT: Never log provider identifiers or URLs.
-    console.error(
-      "photo_proxy_error",
-      JSON.stringify({ requestId, stage: "budget_check_failed" })
-    );
   }
 
   // Get API key
@@ -284,7 +291,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       console.error(`Google Photos API error: ${googleResponse.status}`);
 
       // Record circuit breaker failure for server errors
-      if (googleResponse.status >= 500 || googleResponse.status === 429) {
+      if (isProduction && convex && (googleResponse.status >= 500 || googleResponse.status === 429)) {
         try {
           await convex.mutation(api.providerGateway.recordCircuitFailurePublic, {
             service: "google_places",
@@ -333,24 +340,28 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // Record Google API success (we got a valid photoUri)
-    try {
-      await convex.mutation(api.providerGateway.recordCircuitSuccessPublic, {
-        service: "google_places",
-      });
-    } catch {
-      console.error(
-        "photo_proxy_error",
-        JSON.stringify({ requestId, stage: "circuit_success_record_failed" })
-      );
+    if (isProduction && convex) {
+      try {
+        await convex.mutation(api.providerGateway.recordCircuitSuccessPublic, {
+          service: "google_places",
+        });
+      } catch {
+        console.error(
+          "photo_proxy_error",
+          JSON.stringify({ requestId, stage: "circuit_success_record_failed" })
+        );
+      }
     }
   } catch (error) {
     // Google API call failed - record circuit breaker failure
-    try {
-      await convex.mutation(api.providerGateway.recordCircuitFailurePublic, {
-        service: "google_places",
-      });
-    } catch {
-      // Ignore circuit breaker recording errors
+    if (isProduction && convex) {
+      try {
+        await convex.mutation(api.providerGateway.recordCircuitFailurePublic, {
+          service: "google_places",
+        });
+      } catch {
+        // Ignore circuit breaker recording errors
+      }
     }
 
     if (error instanceof Error && error.name === "AbortError") {
@@ -389,16 +400,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // Record budget usage after successful photo delivery
-    try {
-      await convex.mutation(api.providerGateway.recordBudgetUsagePublic, {
-        endpointClass: "photos",
-        cost: 7,
-      });
-    } catch {
-      console.error(
-        "photo_proxy_error",
-        JSON.stringify({ requestId, stage: "budget_usage_record_failed" })
-      );
+    if (isProduction && convex) {
+      try {
+        await convex.mutation(api.providerGateway.recordBudgetUsagePublic, {
+          endpointClass: "photos",
+          cost: 7,
+        });
+      } catch {
+        console.error(
+          "photo_proxy_error",
+          JSON.stringify({ requestId, stage: "budget_usage_record_failed" })
+        );
+      }
     }
 
     // Stream the image back with appropriate headers
