@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useEffect } from "react";
-import { Search, Filter, SlidersHorizontal, MapIcon, List } from "lucide-react";
+import { Filter, SlidersHorizontal, MapIcon, List, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -125,7 +125,7 @@ export function PlaceListSidebar({
         className
       )}
     >
-      {/* Header with search */}
+      {/* Header with search (standalone mode) */}
       {showHeader && (
         <div className="flex-shrink-0 border-b border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
           {/* Title */}
@@ -152,43 +152,11 @@ export function PlaceListSidebar({
               className="h-10 pl-9 pr-4"
             />
           </div>
-
-          {/* Filters and sort */}
-          {showFilters && (
-            <div className="mt-3 flex items-center gap-2">
-              <Button variant="outline" size="sm" className="h-8 gap-1.5">
-                <Filter className="h-3.5 w-3.5" />
-                Filters
-              </Button>
-              <div className="flex-1" />
-              <div className="flex items-center gap-1 text-sm text-zinc-500 dark:text-zinc-400">
-                <SlidersHorizontal className="h-3.5 w-3.5" />
-                <select
-                  value={sortBy}
-                  onChange={(e) =>
-                    onSortChange?.(
-                      e.target.value as
-                        | "recommended"
-                        | "rating"
-                        | "distance"
-                        | "reviews"
-                    )
-                  }
-                  className="border-0 bg-transparent p-0 text-sm font-medium text-zinc-700 focus:outline-none focus:ring-0 dark:text-zinc-300"
-                >
-                  <option value="recommended">Recommended</option>
-                  <option value="rating">Highest Rated</option>
-                  <option value="distance">Nearest</option>
-                  <option value="reviews">Most Reviewed</option>
-                </select>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
-      {/* Results count */}
-      <div className="flex-shrink-0 border-b border-zinc-200 bg-white px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+      {/* Results count + filters/sort bar */}
+      <div className="flex flex-shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-4 py-2 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="text-sm text-zinc-600 dark:text-zinc-400">
           {isLoading ? (
             <Skeleton className="h-4 w-32" />
@@ -201,6 +169,36 @@ export function PlaceListSidebar({
             </>
           )}
         </div>
+
+        {showFilters && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs">
+              <Filter className="h-3 w-3" />
+              Filters
+            </Button>
+            <div className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+              <SlidersHorizontal className="h-3 w-3" />
+              <select
+                value={sortBy}
+                onChange={(e) =>
+                  onSortChange?.(
+                    e.target.value as
+                      | "recommended"
+                      | "rating"
+                      | "distance"
+                      | "reviews"
+                  )
+                }
+                className="border-0 bg-transparent p-0 text-xs font-medium text-zinc-700 focus:outline-none focus:ring-0 dark:text-zinc-300"
+              >
+                <option value="recommended">Recommended</option>
+                <option value="rating">Highest Rated</option>
+                <option value="distance">Nearest</option>
+                <option value="reviews">Most Reviewed</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Scrollable list */}
