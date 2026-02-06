@@ -168,6 +168,15 @@ export function MapPageClient({
     setMapZoom((prev) => (prev === resolvedZoom ? prev : resolvedZoom));
   }, [resolvedZoom]);
 
+  const fallbackLocationBias = useMemo(
+    () => ({
+      lat: mapCenter.lat,
+      lng: mapCenter.lng,
+      radiusMeters: 12000,
+    }),
+    [mapCenter.lat, mapCenter.lng]
+  );
+
   // Map search hook
   const {
     hasSearchBounds,
@@ -182,6 +191,7 @@ export function MapPageClient({
   } = useMapSearch({
     defaultQuery: normalizeMapSearchQuery(searchQuery, initialQuery),
     zoom: mapZoom,
+    fallbackLocationBias,
   });
 
   // Auto-trigger search when arriving with a ?q param (e.g. from the home search bar).

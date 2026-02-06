@@ -52,6 +52,15 @@ export interface UseMapSearchOptions {
   zoom?: number;
   /** Whether to use tile caching (default: true) */
   useTileCache?: boolean;
+  /**
+   * Fallback location bias used when map bounds are not available yet.
+   * This ensures text search can still run (e.g. URL-driven search on /map?q=...).
+   */
+  fallbackLocationBias?: {
+    lat: number;
+    lng: number;
+    radiusMeters?: number;
+  };
 }
 
 export interface UseMapSearchResult {
@@ -121,6 +130,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
     language = "en",
     zoom = 13,
     useTileCache = true,
+    fallbackLocationBias,
   } = options;
 
   // Tile cache integration
@@ -219,7 +229,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
   const searchArea = useCallback(
     async (query?: string) => {
       const boundsToSearch = pendingBounds ?? lastSearchedBounds;
-      if (!boundsToSearch) return;
+      if (!boundsToSearch && !fallbackLocationBias) return;
       if (cooldownRemaining > 0) return;
 
       // Cancel any pending request
@@ -236,12 +246,24 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         const searchQuery = normalizeMapSearchQuery(query, defaultQuery);
         const result = await textSearchAction({
           query: searchQuery,
-          locationRestriction: {
-            north: boundsToSearch.north,
-            south: boundsToSearch.south,
-            east: boundsToSearch.east,
-            west: boundsToSearch.west,
-          },
+          ...(boundsToSearch
+            ? {
+                locationRestriction: {
+                  north: boundsToSearch.north,
+                  south: boundsToSearch.south,
+                  east: boundsToSearch.east,
+                  west: boundsToSearch.west,
+                },
+              }
+            : fallbackLocationBias
+              ? {
+                  locationBias: {
+                    lat: fallbackLocationBias.lat,
+                    lng: fallbackLocationBias.lng,
+                    radiusMeters: fallbackLocationBias.radiusMeters ?? 10000,
+                  },
+                }
+              : {}),
           language,
         });
 
@@ -275,7 +297,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         }));
 
         // Write to tile cache for future use (if tile caching is enabled)
-        if (useTileCache && result.places.length > 0) {
+        if (useTileCache && result.places.length > 0 && boundsToSearch) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const placeKeys = result.places.map((p: any) => p.placeKey as string);
           try {
@@ -291,7 +313,9 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         }
 
         setResults(searchResultPlaces);
-        setLastSearchedBounds(boundsToSearch);
+        if (boundsToSearch) {
+          setLastSearchedBounds(boundsToSearch);
+        }
         setPendingBounds(null);
 
         // Reset any previous cooldown timers before starting a new one
@@ -341,7 +365,19 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         }
       }
     },
-    [pendingBounds, lastSearchedBounds, cooldownRemaining, cooldownMs, useTileCache, zoom, writeTileCacheMutation, defaultQuery, language, textSearchAction]
+    [
+      pendingBounds,
+      lastSearchedBounds,
+      fallbackLocationBias,
+      cooldownRemaining,
+      cooldownMs,
+      useTileCache,
+      zoom,
+      writeTileCacheMutation,
+      defaultQuery,
+      language,
+      textSearchAction,
+    ]
   );
 
   /**
@@ -388,7 +424,10 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
 
   return {
     pendingBounds,
-    hasSearchBounds: pendingBounds !== null || lastSearchedBounds !== null,
+    hasSearchBounds:
+      pendingBounds !== null ||
+      lastSearchedBounds !== null ||
+      fallbackLocationBias !== undefined,
     showSearchButton,
     results,
     isLoading,
