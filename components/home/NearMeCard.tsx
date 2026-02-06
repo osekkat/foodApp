@@ -6,46 +6,64 @@ import { MapPin, Loader2 } from "lucide-react";
 
 export function NearMeCard() {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Fallback: default to Casablanca when geolocation is unavailable
+  const fallbackToCasablanca = useCallback(() => {
+    router.push("/map?lat=33.5731&lng=-7.5898&zoom=13");
+  }, [router]);
 
   const handleNearMe = useCallback(() => {
     if (!navigator.geolocation) {
-      setError("Geolocation is not supported by your browser");
+      fallbackToCasablanca();
       return;
     }
 
     setLoading(true);
-    setError(null);
+    let resolved = false;
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        router.push(`/map?lat=${latitude}&lng=${longitude}&zoom=15`);
-      },
-      (err) => {
-        setLoading(false);
-        switch (err.code) {
-          case err.PERMISSION_DENIED:
-            setError("Location permission denied");
-            break;
-          case err.POSITION_UNAVAILABLE:
-            setError("Location unavailable");
-            break;
-          case err.TIMEOUT:
-            setError("Location request timed out");
-            break;
-          default:
-            setError("Failed to get location");
-        }
-      },
-      {
+    const resolve = (url: string) => {
+      if (resolved) return;
+      resolved = true;
+      router.push(url);
+    };
+
+    const fallback = () => {
+      if (resolved) return;
+      resolved = true;
+      setLoading(false);
+      fallbackToCasablanca();
+    };
+
+    // Hard timeout: if geolocation doesn't respond at all (e.g. embedded
+    // browsers that never prompt), fall back after 4 seconds.
+    const hardTimeout = setTimeout(fallback, 4000);
+
+    const onSuccess = (position: GeolocationPosition) => {
+      clearTimeout(hardTimeout);
+      const { latitude, longitude } = position.coords;
+      resolve(`/map?lat=${latitude}&lng=${longitude}&zoom=15`);
+    };
+
+    const onFail = () => {
+      clearTimeout(hardTimeout);
+      fallback();
+    };
+
+    // Try low-accuracy first (fast, works on desktops)
+    navigator.geolocation.getCurrentPosition(onSuccess, () => {
+      // If low-accuracy fails, retry with high accuracy (GPS)
+      navigator.geolocation.getCurrentPosition(onSuccess, onFail, {
         enableHighAccuracy: true,
         timeout: 10000,
-        maximumAge: 60000,
-      }
-    );
-  }, [router]);
+        maximumAge: 120000,
+      });
+    }, {
+      enableHighAccuracy: false,
+      timeout: 3000,
+      maximumAge: 300000,
+    });
+  }, [router, fallbackToCasablanca]);
 
   return (
     <section className="mb-16 text-center">
@@ -61,7 +79,7 @@ export function NearMeCard() {
         )}
         {loading ? "Getting location..." : "Find Food Near Me"}
       </button>
-      {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
+      
     </section>
   );
 }
