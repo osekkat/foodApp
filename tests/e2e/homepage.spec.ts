@@ -16,7 +16,7 @@ test.describe("Homepage", () => {
     await searchInput.fill("tagine");
     await searchInput.press("Enter");
 
-    await expect(page).toHaveURL(/\/search\?q=tagine/);
+    await expect(page).toHaveURL(/\/map\?q=tagine/);
   });
 
   test("should display city picker section", async ({ page }) => {

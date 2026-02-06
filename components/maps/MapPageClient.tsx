@@ -1,9 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "convex/react";
 import { cn } from "@/lib/utils";
+import {
+  normalizeMapSearchQuery,
+  shouldAutoExecuteUrlSearch,
+  shouldMarkAutoSearchedOnSubmit,
+} from "@/lib/mapSearchFlow";
 import { useMapSearch } from "@/hooks/useMapSearch";
 import { MapView, type PlaceMarkerData } from "./";
 import { PlaceListSidebar, MapListToggle } from "./PlaceListSidebar";
@@ -22,6 +27,10 @@ const DEFAULT_CENTER = {
 };
 
 const DEFAULT_ZOOM = 13;
+
+function isFiniteNumber(value: number | null): value is number {
+  return value !== null && Number.isFinite(value);
+}
 
 /**
  * Convert Google place type to our type
@@ -87,30 +96,112 @@ export function MapPageClient({
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Read center/zoom overrides from URL params (set by "Find Food Near Me")
+  const urlLat = searchParams.get("lat");
+  const urlLng = searchParams.get("lng");
+  const urlZoom = searchParams.get("zoom");
+
+  const parsedLat = urlLat ? Number(urlLat) : null;
+  const parsedLng = urlLng ? Number(urlLng) : null;
+  const parsedZoom = urlZoom ? Number(urlZoom) : null;
+
+  const hasValidCenterOverride =
+    isFiniteNumber(parsedLat) && isFiniteNumber(parsedLng);
+  const hasValidZoomOverride = isFiniteNumber(parsedZoom) && parsedZoom > 0;
+
+  const resolvedCenter = useMemo(
+    () =>
+      hasValidCenterOverride
+        ? { lat: parsedLat, lng: parsedLng }
+        : initialCenter,
+    [hasValidCenterOverride, parsedLat, parsedLng, initialCenter]
+  );
+  const resolvedZoom = useMemo(
+    () =>
+      hasValidZoomOverride
+        ? Math.round(parsedZoom)
+        : initialZoom,
+    [hasValidZoomOverride, parsedZoom, initialZoom]
+  );
+
   // State
   const [selectedPlaceKey, setSelectedPlaceKey] = useState<string | null>(null);
   const [hoveredPlaceKey, setHoveredPlaceKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState(
-    searchParams.get("q") || initialQuery
+    searchParams.get("q")?.trim() || initialQuery
   );
   const [mobileView, setMobileView] = useState<"map" | "list">("list");
   const [isMapExpanded, setIsMapExpanded] = useState(false);
-  const [mapCenter, setMapCenter] = useState(initialCenter);
-  const [mapZoom, setMapZoom] = useState(initialZoom);
+  const [mapCenter, setMapCenter] = useState(resolvedCenter);
+  const [mapZoom, setMapZoom] = useState(resolvedZoom);
+
+  // Tracks current URL query for auto-search behavior.
+  const initialUrlQueryRef = useRef(searchParams.get("q")?.trim() || "");
+
+  // Track whether we've already auto-searched on mount (when arriving with a ?q param)
+  const hasAutoSearched = useRef(false);
+
+  // Keep search box in sync with URL query (e.g. browser back/forward).
+  useEffect(() => {
+    const urlQuery = searchParams.get("q")?.trim() || "";
+    const queryForInput = urlQuery || initialQuery;
+    setSearchQuery((prev) => (prev === queryForInput ? prev : queryForInput));
+
+    // Reset auto-search latch when URL query changes outside direct submit flow
+    // (e.g. browser back/forward between /map?q=... states).
+    if (initialUrlQueryRef.current !== urlQuery) {
+      initialUrlQueryRef.current = urlQuery;
+      hasAutoSearched.current = false;
+    }
+  }, [searchParams, initialQuery]);
+
+  // Apply URL center/zoom overrides if they change after initial mount.
+  useEffect(() => {
+    setMapCenter((prev) =>
+      prev.lat === resolvedCenter.lat && prev.lng === resolvedCenter.lng
+        ? prev
+        : resolvedCenter
+    );
+  }, [resolvedCenter]);
+
+  useEffect(() => {
+    setMapZoom((prev) => (prev === resolvedZoom ? prev : resolvedZoom));
+  }, [resolvedZoom]);
 
   // Map search hook
   const {
+    hasSearchBounds,
     showSearchButton,
     results: searchResults,
     isLoading: isSearching,
+    error: searchError,
     handleBoundsChange,
     searchArea,
     isOnCooldown,
     cooldownRemaining,
   } = useMapSearch({
-    defaultQuery: searchQuery,
+    defaultQuery: normalizeMapSearchQuery(searchQuery, initialQuery),
     zoom: mapZoom,
   });
+
+  // Auto-trigger search when arriving with a ?q param (e.g. from the home search bar).
+  // We wait until search bounds exist (initial viewport or last searched viewport).
+  useEffect(() => {
+    const urlQuery = initialUrlQueryRef.current;
+    if (
+      !shouldAutoExecuteUrlSearch({
+        hasAutoSearched: hasAutoSearched.current,
+        hasSearchBounds,
+        isOnCooldown,
+        urlQuery,
+      })
+    ) {
+      return;
+    }
+
+    hasAutoSearched.current = true;
+    searchArea(urlQuery);
+  }, [hasSearchBounds, isOnCooldown, searchArea]);
 
   // Work around TypeScript depth limitations with complex Convex types
   // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
@@ -227,22 +318,39 @@ export function MapPageClient({
   }, []);
 
   const handleSearchSubmit = useCallback(() => {
+    const normalizedQuery = searchQuery.trim();
+    if (
+      shouldMarkAutoSearchedOnSubmit({
+        hasSearchBounds,
+        isOnCooldown,
+      })
+    ) {
+      hasAutoSearched.current = true;
+    }
+    initialUrlQueryRef.current = normalizedQuery;
+
     // Update URL with search query
     const params = new URLSearchParams(searchParams.toString());
-    params.set("q", searchQuery);
-    router.push(`/map?${params.toString()}`);
+    if (normalizedQuery) {
+      params.set("q", normalizedQuery);
+    } else {
+      params.delete("q");
+    }
+    const nextUrl = params.toString() ? `/map?${params.toString()}` : "/map";
+    router.push(nextUrl);
     // Trigger search
-    searchArea(searchQuery);
-  }, [searchQuery, searchParams, router, searchArea]);
+    searchArea(normalizedQuery || undefined);
+  }, [searchQuery, searchParams, router, searchArea, hasSearchBounds, isOnCooldown]);
 
   const handleSearchThisArea = useCallback(() => {
-    searchArea(searchQuery);
+    const normalizedQuery = searchQuery.trim();
+    searchArea(normalizedQuery || undefined);
   }, [searchArea, searchQuery]);
 
   const handleResetView = useCallback(() => {
-    setMapCenter(initialCenter);
-    setMapZoom(initialZoom);
-  }, [initialCenter, initialZoom]);
+    setMapCenter(resolvedCenter);
+    setMapZoom(resolvedZoom);
+  }, [resolvedCenter, resolvedZoom]);
 
   const capitalizedQuery = searchQuery
     ? searchQuery.charAt(0).toUpperCase() + searchQuery.slice(1)
@@ -333,7 +441,13 @@ export function MapPageClient({
       </header>
 
       {/* ── Content: sidebar + map ── */}
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
+        {searchError && (
+          <div className="absolute left-1/2 top-16 z-30 w-[min(92vw,720px)] -translate-x-1/2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 shadow-sm dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+            Search failed: {searchError}
+          </div>
+        )}
+
         {/* Sidebar (left) - hidden on mobile when map view */}
         <aside
           className={cn(

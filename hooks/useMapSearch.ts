@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAction, useMutation } from "convex/react";
 import type { MapBounds } from "@/components/maps";
 import { useMapTileCache } from "./useMapTileCache";
+import { normalizeMapSearchQuery } from "@/lib/mapSearchFlow";
 
 /**
  * Debounce delay before showing "Search this area" button (ms)
@@ -56,6 +57,8 @@ export interface UseMapSearchOptions {
 export interface UseMapSearchResult {
   /** Current map bounds (after debounce) */
   pendingBounds: MapBounds | null;
+  /** Whether we currently have any bounds available to run a search */
+  hasSearchBounds: boolean;
   /** Whether to show "Search this area" button */
   showSearchButton: boolean;
   /** Search results */
@@ -70,7 +73,7 @@ export interface UseMapSearchResult {
   isOnCooldown: boolean;
   /** Handle bounds change from map */
   handleBoundsChange: (bounds: MapBounds) => void;
-  /** Trigger search for the pending bounds */
+  /** Trigger search for pending bounds, or last searched bounds if pending is empty */
   searchArea: (query?: string) => Promise<void>;
   /** Clear search state */
   clear: () => void;
@@ -215,7 +218,8 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
    */
   const searchArea = useCallback(
     async (query?: string) => {
-      if (!pendingBounds) return;
+      const boundsToSearch = pendingBounds ?? lastSearchedBounds;
+      if (!boundsToSearch) return;
       if (cooldownRemaining > 0) return;
 
       // Cancel any pending request
@@ -229,20 +233,23 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         setShowSearchButton(false);
 
         // Call the real textSearch action
-        const searchQuery = query || defaultQuery;
+        const searchQuery = normalizeMapSearchQuery(query, defaultQuery);
         const result = await textSearchAction({
           query: searchQuery,
           locationRestriction: {
-            north: pendingBounds.north,
-            south: pendingBounds.south,
-            east: pendingBounds.east,
-            west: pendingBounds.west,
+            north: boundsToSearch.north,
+            south: boundsToSearch.south,
+            east: boundsToSearch.east,
+            west: boundsToSearch.west,
           },
           language,
         });
 
         // Check if request was aborted
-        if (controller.signal.aborted) {
+        if (
+          controller.signal.aborted ||
+          abortControllerRef.current !== controller
+        ) {
           return;
         }
 
@@ -273,7 +280,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
           const placeKeys = result.places.map((p: any) => p.placeKey as string);
           try {
             await writeTileCacheMutation({
-              tileKey: `viewport:${pendingBounds.north.toFixed(4)},${pendingBounds.south.toFixed(4)},${pendingBounds.east.toFixed(4)},${pendingBounds.west.toFixed(4)}`,
+              tileKey: `viewport:${boundsToSearch.north.toFixed(4)},${boundsToSearch.south.toFixed(4)},${boundsToSearch.east.toFixed(4)},${boundsToSearch.west.toFixed(4)}`,
               zoom,
               placeKeys,
               provider: "google",
@@ -284,8 +291,16 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
         }
 
         setResults(searchResultPlaces);
-        setLastSearchedBounds(pendingBounds);
+        setLastSearchedBounds(boundsToSearch);
         setPendingBounds(null);
+
+        // Reset any previous cooldown timers before starting a new one
+        if (cooldownTimerRef.current) {
+          clearTimeout(cooldownTimerRef.current);
+        }
+        if (cooldownIntervalRef.current) {
+          clearInterval(cooldownIntervalRef.current);
+        }
 
         // Start cooldown
         setCooldownRemaining(cooldownMs);
@@ -309,16 +324,24 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
           }
         }, cooldownMs);
       } catch (err) {
-        // Don't show error if request was aborted
-        if (err instanceof Error && err.name === "AbortError") {
+        // Ignore errors from aborted/stale requests
+        if (
+          controller.signal.aborted ||
+          abortControllerRef.current !== controller ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
           return;
         }
         setError(err instanceof Error ? err.message : "Search failed");
       } finally {
-        setIsLoading(false);
+        // Only the latest in-flight request controls loading state
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+          setIsLoading(false);
+        }
       }
     },
-    [pendingBounds, cooldownRemaining, cooldownMs, useTileCache, zoom, writeTileCacheMutation, defaultQuery, language, textSearchAction]
+    [pendingBounds, lastSearchedBounds, cooldownRemaining, cooldownMs, useTileCache, zoom, writeTileCacheMutation, defaultQuery, language, textSearchAction]
   );
 
   /**
@@ -365,6 +388,7 @@ export function useMapSearch(options: UseMapSearchOptions = {}): UseMapSearchRes
 
   return {
     pendingBounds,
+    hasSearchBounds: pendingBounds !== null || lastSearchedBounds !== null,
     showSearchButton,
     results,
     isLoading,

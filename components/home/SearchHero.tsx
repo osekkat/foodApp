@@ -8,16 +8,21 @@ export function SearchHero() {
   const [query, setQuery] = useState("");
   const router = useRouter();
 
+  const navigateToMap = useCallback((value: string) => {
+    const trimmed = value.trim();
+    if (trimmed) {
+      router.push(`/map?q=${encodeURIComponent(trimmed)}`);
+      return;
+    }
+    router.push("/map");
+  }, [router]);
+
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      if (query.trim()) {
-        router.push(`/search?q=${encodeURIComponent(query.trim())}`);
-      } else {
-        router.push("/search");
-      }
+      navigateToMap(query);
     },
-    [query, router]
+    [query, navigateToMap]
   );
 
   return (

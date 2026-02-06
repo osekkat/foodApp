@@ -56,6 +56,11 @@ export interface ProviderRequestParams {
   placeId?: string;
   /** Query for search requests */
   query?: string;
+  /**
+   * Whether text_search cache hits may return ID-only results ({ placeKey }).
+   * Keep false for UI flows that require full place display data.
+   */
+  allowIdOnlySearchCacheResponse?: boolean;
   /** Location bias for searches */
   locationBias?: {
     lat: number;
@@ -1401,6 +1406,8 @@ export const providerRequest = internalAction({
     sessionToken: v.optional(v.string()),
     placeId: v.optional(v.string()),
     query: v.optional(v.string()),
+    /** Allow text_search cache hits to return ID-only rows */
+    allowIdOnlySearchCacheResponse: v.optional(v.boolean()),
     /** Autocomplete input text */
     input: v.optional(v.string()),
     /** Types to include in autocomplete (e.g., restaurant, cafe) */
@@ -1609,27 +1616,30 @@ export const providerRequest = internalAction({
       );
 
       if (cacheResult.cacheHit) {
-        // Return cached placeKeys as search results
-        // The caller should fetch fresh details for these IDs
-        return finalize({
-          success: true,
-          data: {
-            // Format as a search response with just placeKeys
-            places: cacheResult.placeKeys.map((key: string) => ({
-              placeKey: key,
-              // Caller must fetch details separately
-            })),
-            cachedResult: true,
-          },
-          metadata: {
-            requestId,
-            latencyMs: Date.now() - startTime,
-            costClass: "none", // Cache hit = no API cost
-            fieldSet: fieldSetKey,
-            endpointClass,
-            cacheHit: true,
-          },
-        });
+        // ID-only cache hits are only safe for callers that can hydrate details separately.
+        // UI text-search flows (map/list cards) need full provider fields, so they should
+        // continue to provider fetch unless this is explicitly enabled.
+        if (args.allowIdOnlySearchCacheResponse) {
+          return finalize({
+            success: true,
+            data: {
+              // Format as a search response with just placeKeys
+              places: cacheResult.placeKeys.map((key: string) => ({
+                placeKey: key,
+                // Caller must fetch details separately
+              })),
+              cachedResult: true,
+            },
+            metadata: {
+              requestId,
+              latencyMs: Date.now() - startTime,
+              costClass: "none", // Cache hit = no API cost
+              fieldSet: fieldSetKey,
+              endpointClass,
+              cacheHit: true,
+            },
+          });
+        }
       }
     }
 

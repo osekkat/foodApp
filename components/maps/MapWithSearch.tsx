@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { normalizeMapSearchQuery } from "@/lib/mapSearchFlow";
 import { useMapSearch } from "@/hooks/useMapSearch";
 import { MapView, type PlaceMarkerData } from "./";
 import { SearchThisAreaButton } from "@/components/search";
@@ -59,7 +60,7 @@ export function MapWithSearch({
     handleBoundsChange,
     searchArea,
   } = useMapSearch({
-    defaultQuery: searchQuery,
+    defaultQuery: normalizeMapSearchQuery(searchQuery, "restaurant"),
   });
 
   // Convert search results to PlaceMarkerData format
@@ -94,7 +95,8 @@ export function MapWithSearch({
 
   // Handle search button click
   const handleSearchClick = useCallback(() => {
-    searchArea(searchQuery);
+    const normalizedQuery = searchQuery.trim();
+    searchArea(normalizedQuery || undefined);
   }, [searchArea, searchQuery]);
 
   return (

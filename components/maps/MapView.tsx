@@ -117,21 +117,11 @@ export function MapView({
     []
   );
 
-  const handleMapLoad = useCallback((map: google.maps.Map) => {
-    mapRef.current = map;
-    setIsMapLoaded(true);
-  }, []);
+  const emitBounds = useCallback(
+    (map: google.maps.Map) => {
+      if (!onBoundsChange) return;
 
-  const handleBoundsChanged = useCallback(() => {
-    if (!mapRef.current || !onBoundsChange) return;
-
-    // Throttle bounds updates to max 1 per 100ms
-    if (throttleRef.current) return;
-
-    throttleRef.current = setTimeout(() => {
-      throttleRef.current = null;
-
-      const bounds = mapRef.current?.getBounds();
+      const bounds = map.getBounds();
       if (!bounds) return;
 
       const ne = bounds.getNorthEast();
@@ -143,8 +133,39 @@ export function MapView({
         east: ne.lng(),
         west: sw.lng(),
       });
+    },
+    [onBoundsChange]
+  );
+
+  const handleMapLoad = useCallback(
+    (map: google.maps.Map) => {
+      mapRef.current = map;
+      setIsMapLoaded(true);
+
+      // Ensure first viewport bounds are emitted once the map is ready so
+      // initial URL-driven searches (?q=...) can execute without user pan/zoom.
+      if (onBoundsChange) {
+        google.maps.event.addListenerOnce(map, "idle", () => {
+          emitBounds(map);
+        });
+      }
+    },
+    [onBoundsChange, emitBounds]
+  );
+
+  const handleBoundsChanged = useCallback(() => {
+    if (!mapRef.current || !onBoundsChange) return;
+
+    // Throttle bounds updates to max 1 per 100ms
+    if (throttleRef.current) return;
+
+    throttleRef.current = setTimeout(() => {
+      throttleRef.current = null;
+
+      if (!mapRef.current) return;
+      emitBounds(mapRef.current);
     }, 100);
-  }, [onBoundsChange]);
+  }, [onBoundsChange, emitBounds]);
 
   const handleMarkerClick = useCallback(
     (placeKey: string) => {
