@@ -98,10 +98,16 @@ export const textSearch = action({
     const data = result.data as any;
     const rawPlaces = data?.places ?? [];
 
-    // Transform to our format
+    // Transform to our format, filtering out places with no usable data
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const places = await Promise.all(rawPlaces.map(async (place: any) => {
+    const allPlaces = await Promise.all(rawPlaces.map(async (place: any) => {
       const placeId = place.id ?? place.name?.split("/").pop() ?? "";
+      const displayName = place.displayName?.text;
+
+      // Skip places with no ID or no display name -- these are unusable results
+      if (!placeId || !displayName) {
+        return null;
+      }
       
       // Extract first photo reference (policy-safe: we only store the reference, not the photo)
       // Google Places API (New) returns photos as: { name: "places/{placeId}/photos/{photoRef}", ... }
@@ -128,7 +134,7 @@ export const textSearch = action({
       return {
         placeKey: `g:${placeId}`,
         placeId,
-        displayName: place.displayName?.text ?? "Unknown Place",
+        displayName,
         location: {
           lat: place.location?.latitude ?? 0,
           lng: place.location?.longitude ?? 0,
@@ -141,6 +147,11 @@ export const textSearch = action({
         photoUrl,
       };
     }));
+
+    // Remove nulls (filtered-out places)
+    const places = allPlaces.filter(
+      (p): p is NonNullable<typeof p> => p !== null
+    );
 
     return {
       success: true,

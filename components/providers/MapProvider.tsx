@@ -1,14 +1,32 @@
 "use client";
 
-import { Libraries, LoadScript } from "@react-google-maps/api";
-import { ReactNode, useCallback, useState } from "react";
+import { useJsApiLoader, Libraries } from "@react-google-maps/api";
+import { createContext, ReactNode, useContext } from "react";
 
 /**
  * Google Maps library configuration
  * - places: Required for Places API autocomplete integration
  * - marker: Required for Advanced Markers API
+ *
+ * IMPORTANT: This must be defined outside the component to avoid
+ * re-creating the array on every render, which would cause the
+ * loader to re-initialize.
  */
 const GOOGLE_MAPS_LIBRARIES: Libraries = ["places", "marker"];
+
+interface MapContextValue {
+  isLoaded: boolean;
+  loadError: Error | undefined;
+}
+
+const MapContext = createContext<MapContextValue>({
+  isLoaded: false,
+  loadError: undefined,
+});
+
+export function useMapContext() {
+  return useContext(MapContext);
+}
 
 interface MapProviderProps {
   children: ReactNode;
@@ -17,25 +35,29 @@ interface MapProviderProps {
 /**
  * MapProvider wraps the application with Google Maps JavaScript API loader.
  *
+ * Uses `useJsApiLoader` instead of `LoadScript` to avoid the
+ * "google api is already presented" error that occurs on client-side
+ * navigation or hot-reload (LoadScript tries to inject the script tag
+ * on every mount; useJsApiLoader is idempotent).
+ *
  * Features:
- * - Lazy loads the Google Maps script
- * - Provides loading and error states
+ * - Safely loads the Google Maps script (idempotent)
+ * - Provides loading and error states via context
  * - Configures required libraries (places, marker)
  *
  * Environment:
  * - Requires NEXT_PUBLIC_GOOGLE_MAPS_KEY environment variable
  */
 export function MapProvider({ children }: MapProviderProps) {
-  const [loadError, setLoadError] = useState<Error | null>(null);
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? "";
 
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: apiKey,
+    libraries: GOOGLE_MAPS_LIBRARIES,
+    // Prevent loading if no API key is configured
+    preventGoogleFontsLoading: false,
+  });
 
-  const handleError = useCallback((error: Error) => {
-    console.error("Google Maps failed to load:", error);
-    setLoadError(error);
-  }, []);
-
-  // If no API key configured, render children without map functionality
   if (!apiKey) {
     if (process.env.NODE_ENV === "development") {
       console.warn("NEXT_PUBLIC_GOOGLE_MAPS_KEY not configured - map features disabled");
@@ -43,18 +65,13 @@ export function MapProvider({ children }: MapProviderProps) {
     return <>{children}</>;
   }
 
-  // If load error, render children with degraded functionality
   if (loadError) {
-    return <>{children}</>;
+    console.error("Google Maps failed to load:", loadError);
   }
 
   return (
-    <LoadScript
-      googleMapsApiKey={apiKey}
-      libraries={GOOGLE_MAPS_LIBRARIES}
-      onError={handleError}
-    >
+    <MapContext.Provider value={{ isLoaded, loadError }}>
       {children}
-    </LoadScript>
+    </MapContext.Provider>
   );
 }

@@ -5,6 +5,7 @@ import type { Clusterer } from "@react-google-maps/marker-clusterer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlaceMarker, type PlaceMarkerData } from "./PlaceMarker";
 import { MOROCCO_MAP_STYLES } from "./mapStyles";
+import { useMapContext } from "@/components/providers/MapProvider";
 
 /**
  * Default center on Casablanca, Morocco
@@ -94,6 +95,7 @@ export function MapView({
   selectedPlaceKey,
   showIndices = false,
 }: MapViewProps) {
+  const { isLoaded: isApiLoaded, loadError } = useMapContext();
   const mapRef = useRef<google.maps.Map | null>(null);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
   const throttleRef = useRef<NodeJS.Timeout | null>(null);
@@ -177,6 +179,34 @@ export function MapView({
     },
     [places, handleMarkerClick, highlightedPlaceKey, selectedPlaceKey, showIndices]
   );
+
+  // Wait for the Google Maps script to load before rendering the map
+  if (!isApiLoaded) {
+    return (
+      <div
+        className={className}
+        style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#f4f4f5" }}
+      >
+        <div style={{ textAlign: "center", color: "#71717a" }}>
+          <div style={{ marginBottom: 8, fontSize: 14 }}>Loading map...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div
+        className={className}
+        style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#f4f4f5" }}
+      >
+        <div style={{ textAlign: "center", color: "#ef4444" }}>
+          <div style={{ marginBottom: 4, fontWeight: 500 }}>Map failed to load</div>
+          <div style={{ fontSize: 13, color: "#71717a" }}>Please try refreshing the page.</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={className} style={{ width: "100%", height: "100%" }}>

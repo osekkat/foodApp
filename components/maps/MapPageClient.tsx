@@ -148,6 +148,9 @@ export function MapPageClient({
 
     // Add search results
     for (const result of searchResults) {
+      // Skip results with no display name (unusable)
+      if (!result.displayName) continue;
+
       // Skip if already added from curated
       if (places.some((p) => p.placeKey === result.placeKey)) continue;
 
@@ -163,7 +166,7 @@ export function MapPageClient({
 
       places.push({
         placeKey: result.placeKey,
-        name: result.displayName || "Unknown Place",
+        name: result.displayName,
         location: result.location,
         placeType,
         providerRating: result.rating,
